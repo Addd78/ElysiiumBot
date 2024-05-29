@@ -101,7 +101,7 @@ async def sync(ctx):
 
 tree = bot.tree
 
-def run_bot(token='MTA5NzgyMDUyNDgxOTc3NTUwOQ.G315JU.6ioXdXGkmwIRTWS4EtyiECt4Fs8WPHNH66hR3M', debug=False):
+def run_bot(token='TOKEN', debug=False):
     if debug: print(bot._connection.loop)
     bot.run(token)
     if debug: print(bot._connection.loop)
@@ -1213,7 +1213,7 @@ async def r_ressource(interaction, ressource: str, quantite: int):
 if SERVER:
     run_bot()
 else:
-    bot.run('MTA5NzgyMDUyNDgxOTc3NTUwOQ.G315JU.6ioXdXGkmwIRTWS4EtyiECt4Fs8WPHNH66hR3M')
+    bot.run('TOKEN')
 
 @tasks.loop(seconds=30)
 async def update_status():
