@@ -57,6 +57,7 @@ heure_emoji = '<a:Time:1242546035318984714>'
 stars_emoji = '<a:stars:1242544796623569031>'
 fleche_emoji = '<:Arrow:1242544641367212093>'
 pioche_emoji = '<:miner_icon:1242544602410647644>'
+ailes_emoji = '<a:redwings:1242581740703449169>'
 Addd78130_user_id = 781524251332182016
 chef_role = 1031253346436268162
 staff = 1031253367311310969
@@ -100,7 +101,7 @@ async def sync(ctx):
 
 tree = bot.tree
 
-def run_bot(token='TOKEN', debug=False):
+def run_bot(token='MTA5NzgyMDUyNDgxOTc3NTUwOQ.G315JU.6ioXdXGkmwIRTWS4EtyiECt4Fs8WPHNH66hR3M', debug=False):
     if debug: print(bot._connection.loop)
     bot.run(token)
     if debug: print(bot._connection.loop)
@@ -225,7 +226,7 @@ async def qdf(interaction):
 
 
 goal_type_translations = {
-    "BREAK_BLOCKS": f"{breakblocs_emoji}Casser des blocs :",
+    "BREAK_BLOCKS": f"{pioche_emoji}Casser des blocs :",
     "MOB_KILL": f"{mobkill_emoji}Tuer des mob : ",
     "FISHING": "Pêcher : ",
     "WALK": "Marcher une certaine distance",
@@ -278,7 +279,7 @@ async def avosmarques(interaction):
         
         quest = f"{goal_type_french} {amount} {extra_french}"
         
-        embed = discord.Embed(title=f"{run_emoji} Événement A Vos Marques", color=0x2F2A9E)
+        embed = discord.Embed(title=f"{ailes_emoji} Événement A Vos Marques", color=0x2F2A9E)
 
         embed.add_field(name=f"{quete_emoji} Quête", value=str(quest), inline=True)
         embed.add_field(name="", value="", inline=True)
@@ -302,6 +303,31 @@ def create_embed(title=None, description=None, color=discord.Color.gold()):
 	embed.timestamp = datetime.utcnow()
 	embed.set_footer(text='', icon_url='') 
 	return embed
+
+@bot.command()
+async def top(interaction):
+    api_url = "https://api.paladium.games/v1/paladium/faction/leaderboard"
+    response = requests.get(api_url)
+    
+    if response.status_code == 200:
+        data = response.json()[0] 
+        
+        emblem = data["emblem"]
+        emblem_url = f"https://pictures.paladium.games/emblem/{emblem['backgroundId']}_{emblem['foregroundColor']}_{emblem['iconId']}.png"
+        
+        embed = discord.Embed(title=f"Top Faction: {data['name']}", color=0xf0eee9)
+        
+        embed.add_field(name="Position", value=data["position"], inline=True)
+        embed.add_field(name="Elo", value=data["elo"], inline=True)
+        embed.add_field(name="Trend", value=data["trend"], inline=True)
+        
+        embed.set_thumbnail(url=emblem_url)
+        
+        await interaction.response.send_message(embed=embed)
+    else:
+        embed = discord.Embed(title="Erreur", description="Impossible de récupérer le classement des factions.", color=0xFF0000, ephemeral=True)
+        await interaction.response.send_message(embed=embed)
+        
 #######################################  ROLES  ###########################################
 
 ROLES = {
@@ -1187,7 +1213,7 @@ async def r_ressource(interaction, ressource: str, quantite: int):
 if SERVER:
     run_bot()
 else:
-    bot.run('TOKEN')
+    bot.run('MTA5NzgyMDUyNDgxOTc3NTUwOQ.G315JU.6ioXdXGkmwIRTWS4EtyiECt4Fs8WPHNH66hR3M')
 
 @tasks.loop(seconds=30)
 async def update_status():
