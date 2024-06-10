@@ -1,7 +1,9 @@
 import asyncio
 import json
 import typing
+from discord.utils import get
 import requests
+from math import floor
 import os
 import random
 from discord.app_commands import AppCommandError
@@ -12,6 +14,11 @@ from discord.ui import View
 from discord.ext import commands
 from collections import defaultdict
 from datetime import datetime, timedelta
+fleche_rose_emoji = '<a:flecheRose:1242544763656208475>'
+etoile_boost_emoji = '<:LegendBoost:1243672429726011505>'
+ticket_emoji = '<:Ticket:1242794933539180606>'
+alarme_emoji = '<a:red:1242544438706700390>'
+feublanc_emoji = '<a:whitefire:1242810223589195913>'
 breakblocs_emoji = '<:break:1243679212347457546>'
 mobkill_emoji = '<:mob_kill:1243678815184752651>'
 serveur_emoji = '<:servers:1243827983303839774>'
@@ -60,7 +67,6 @@ pioche_emoji = '<:miner_icon:1242544602410647644>'
 ailes_emoji = '<a:redwings:1242581740703449169>'
 Addd78130_user_id = 781524251332182016
 chef_role = 1031253346436268162
-staff = 1031253367311310969
 json_bc_filename = "ressources_bc.json"
 recruteur = 1031253354904572105 
 faction = 1031253372327698442
@@ -72,7 +78,7 @@ recup = 1212132568539996211
 bad_words_json_path = 'bad_words.json'
 ignored_users_json_path = 'ignored_users.json'
 mute_role_id = 1098721696573300806
-staff_role=1031253367311310969 
+staff_role = 1031253367311310969
 
 
 ########################################## START #########################################
@@ -83,9 +89,9 @@ intents = discord.Intents().all()
 
 class PersistentViewBot(commands.Bot):
     def __init__(self):
-        super().__init__(command_prefix=commands.when_mentioned_or('CAS'), help_command=None, case_insensitive=True, intents=intents)
+        super().__init__(command_prefix=commands.when_mentioned_or('CAS'), help_command=None, case_insensitive=True, intents=intents, timeout=None)
     async def setup_hook(self) -> None:
-        views = []
+        views = [RouletteView(), RemoteButtonView(), AvoMarquesButtonView()]
         for element in views:
             self.add_view(element)
         
@@ -114,13 +120,128 @@ def load_coin_balances():
     except FileNotFoundError:
         return None
 
+############################### ROULETTE ########################################
 
+def charger_paris():
+    with open('pari.json', 'r') as f:
+        return json.load(f)
+
+def sauvegarder_paris(data):
+    with open('pari.json', 'w') as f:
+        json.dump(data, f, indent=4)
+
+@bot.tree.command()
+@discord.app_commands.checks.has_role(faction)
+async def parier(interaction, montant: int):
+    """Parier une somme pour la Roulette"""
+    if montant <= 0:
+        await interaction.response.send_message("Le montant du pari doit être supérieur à zéro.", ephemeral=True)
+        return
+
+    data = charger_paris()
+    user_id = str(interaction.user.id)
+
+    if user_id in data["bets"]:
+        data["bets"][user_id] += montant
+    else:
+        data["bets"][user_id] = montant
+
+    data["total_pot"] += montant
+    sauvegarder_paris(data)
+    embed=create_small_embed(f"Vous avez parié : {montant} {dollar_emoji}")
+
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command()
+@discord.app_commands.checks.has_role(staff_role)
+async def roulette(interaction):
+    """Créer la roulette"""
+    view = RouletteView()
+    embed = create_small_embed(f"{feublanc_emoji} Appuyez sur le bouton pour démarrer la roulette ")
+    await interaction.response.send_message(embed=embed, view=view)
+    
+@bot.tree.command(name="actu_roulette")
+@discord.app_commands.checks.has_role(faction)
+async def actu_roulette(interaction: discord.Interaction):
+    """Etat de la Roulette"""
+    if not interaction.guild:
+        await interaction.response.send_message("Cette commande ne peut être utilisée que dans un serveur.", ephemeral=True)
+        return
+    
+    data = charger_paris()
+    if not data["bets"]:
+        embed = create_small_embed("Aucun pari n'a été placé.{no_emoji}")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+
+    embed = discord.Embed(title="État Actuel de la Roulette", color=0xFECC05)
+    for user_id, montant in data["bets"].items():
+        user = interaction.guild.get_member(int(user_id))
+        if user:
+            embed.add_field(name=user.display_name, value=f"{montant}💲", inline=False)
+
+    embed.add_field(name="Cagnotte Totale", value=f"{data['total_pot']} {dollar_emoji}", inline=False)
+
+    await interaction.response.send_message(embed=embed)
+
+
+@bot.tree.command()
+@discord.app_commands.checks.has_role(faction)
+async def mise(interaction):
+    """Obtenir vôtre propre mise"""
+    data = charger_paris()
+    user_id = str(interaction.user.id)
+    if user_id in data["bets"]:
+        montant = data["bets"][user_id]
+        embed = create_small_embed(f"Vous avez parié : `{montant}` {dollar_emoji}.")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    else:
+        embed=create_small_embed(f"Vous n'avez pas encore parié. {no_emoji}")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+class RouletteView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+    @discord.ui.button(label="Démarrer la Roulette", style=discord.ButtonStyle.primary, custom_id="Démarrer la Roulette")
+    async def start_roulette(self, interaction: discord.Interaction, button: discord.ui.Button):
+        guild=interaction.guild
+        role = guild.get_role(1031253367311310969)
+        if role not in interaction.user.roles:
+            embed=create_small_embed(f"Vous n'avez pas les permissions pour démarrer la roulette. {no_emoji}")
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        data = charger_paris()
+        if not data["bets"]:
+            embed = create_small_embed(f"Aucun pari n'a été placé. {no_emoji}")
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        participants = list(data["bets"].keys())
+        random.shuffle(participants)
+        winner_id = random.choice(participants)
+        winner_amount = data["total_pot"]
+
+        participant_mentions = [interaction.guild.get_member(int(user_id)).mention for user_id in data["bets"].keys()]
+        participant_list = ', '.join(participant_mentions)
+
+        embed = discord.Embed(title="Elysiium ROULETTE", color=0x00ff00)
+        embed.add_field(name="Gagnant", value=f"<@{winner_id}> gagne {winner_amount} {dollar_emoji}!", inline=False)
+        embed.add_field(name="Cagnotte Totale {dollar_emoji}", value=f"{data['total_pot']}", inline=False)
+        embed.add_field(name="Participants", value=participant_list, inline=False)
+
+        await interaction.response.send_message(embed=embed)
+
+        data["bets"] = {}
+        data["total_pot"] = 0
+        sauvegarder_paris(data)
 ############################### API PALADIUM ########################################
 
 serveurs_paladium = [f"Soleratl", "Muzdan", "Manashino", "Luccento", "Imbali", "Keltis", "Neolith", "Untaa"]
 
 @bot.tree.command()
 async def pala_status(interaction, server: str):
+    """Status d'un serveur faction de paladium"""
     server_name = server.capitalize()
     if server_name in serveurs_paladium:
         api_url = "https://api.paladium.games/v1/status"
@@ -131,20 +252,21 @@ async def pala_status(interaction, server: str):
             status = data['java']['factions'].get(server_name, "offline")
             server_emoji = f"{server_name.lower()}_emoji"
             if status == "running":
-                embed = discord.Embed(title=f"Statut du serveur {server_name} {globals()[server_emoji]}", description=f"Le serveur {server_name} est en ligne {online_emoji} !", color=0xFFFFFF)
+                embed = discord.Embed(title=f"Statut du serveur {server_name} {globals()[server_emoji]}", description=f"Le serveur {server_name} est en ligne {online_emoji} !", color=0xE7DDFF)
             else:
-                embed = discord.Embed(title=f"Statut du serveur {server_name} {globals()[server_emoji]}", description=f"Le serveur {server_name} n'est pas en ligne {offline_emoji}.", color=0xFF0000)
+                embed = discord.Embed(title=f"Statut du serveur {server_name} {globals()[server_emoji]}", description=f"Le serveur {server_name} n'est pas en ligne {offline_emoji}.", color=0xE7DDFF)
             await interaction.response.send_message(embed=embed, ephemeral=True)
         else:
-            embed = discord.Embed(title="Erreur", description=f"Impossible de récupérer les informations sur l'état du serveur {no_emoji}.", color=0xFF0000)
+            embed = discord.Embed(title="Erreur", description=f"Impossible de récupérer les informations sur l'état du serveur {no_emoji}.", color=0xE7DDFF)
             await interaction.response.send_message(embed=embed, ephemeral=True)
     else:
-        embed = discord.Embed(title="Erreur", description=f"Le serveur {server_name} n'existe pas, les serveurs valides sont : {', '.join(serveurs_paladium)}.", color=0xFF0000)
+        embed = discord.Embed(title="Erreur", description=f"Le serveur {server_name} n'existe pas, les serveurs valides sont : {', '.join(serveurs_paladium)}.", color=0xE7DDFF)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
         
 @bot.tree.command()
 async def player_profil(interaction, username: str):
+    """Information d'un joueur paladium"""
     api_url = f"https://api.paladium.games/v1/paladium/player/profile/{username}"
     response = requests.get(api_url)
     
@@ -152,7 +274,7 @@ async def player_profil(interaction, username: str):
         data = response.json()
         embed = discord.Embed(title=f"{pala_emoji} Profil de {data['username']}", color=0xFFD700) 
         embed.add_field(name=f"{faction_emoji} Faction", value=data["faction"], inline=True)
-        embed.add_field(name="", value="", inline=False)
+        embed.add_field(name="", value="", inline=True)
         embed.add_field(name=f"{alchi_emoji} Alchimiste", value=" "*10 + str(data["jobs"]["alchemist"]["level"]), inline=True)
         embed.add_field(name="", value="      ", inline=True)
         embed.add_field(name=f"{farmer_emoji} Fermier", value=" "*10 + str(data["jobs"]["farmer"]["level"]), inline=True)
@@ -173,6 +295,7 @@ async def player_profil(interaction, username: str):
 
 @bot.tree.command()
 async def faction_profil(interaction, name: str):
+    """Profil d'une faction paladium"""
     api_url = f"https://api.paladium.games/v1/paladium/faction/profile/{name}"
     response = requests.get(api_url)
     
@@ -205,6 +328,7 @@ async def faction_profil(interaction, name: str):
         
 @bot.tree.command()
 async def qdf(interaction):
+    """Qdf en cours"""
     api_url = "https://api.paladium.games/v1/paladium/faction/quest"
     response = requests.get(api_url)
     
@@ -224,11 +348,18 @@ async def qdf(interaction):
         embed = discord.Embed(title="Erreur", description="Impossible de récupérer les détails de la quête de faction.", color=0xFF0000)
         await interaction.response.send_message(embed=embed)
 
+@bot.tree.command(name="send_avosmarques")
+@discord.app_commands.checks.has_role(staff_role)
+async def send_avosmarques(interaction: discord.Interaction):
+    """Prochain A Vos Marques"""
+    embed = discord.Embed(title=f"{ailes_emoji} Événement A Vos Marques", description=f"{fleche_rose_emoji} Cliquez sur le bouton ci-dessous pour voir les détails du prochain événement 'A Vos Marques'", color=0x2F2A9E)
+    view = AvoMarquesButtonView()
+    await interaction.response.send_message(embed=embed, view=view)
 
 goal_type_translations = {
     "BREAK_BLOCKS": f"{pioche_emoji}Casser des blocs :",
     "MOB_KILL": f"{mobkill_emoji}Tuer des mob : ",
-    "FISHING": "Pêcher : ",
+    "FISHING": f"Pêcher ",
     "WALK": "Marcher une certaine distance",
     "ITEM_CRAFT": "Fabriquer des objets",
     "ITEM_SMELT": "Fondre des objets",
@@ -247,16 +378,57 @@ server_type_translations = {
 extra_translations = {
     "sheep": f"moutons {mouton_emoji}",
     "pig": f"cochons {cochon_emoji}",
-    "fish": f"poissons {poisson_emoji}",
+    "": f"poissons {poisson_emoji}",
     "cow": f"vache {vache_emoji}",
     "minecraft:stone/0": "blocs de pierre",
     "minecraft:grass/0": "blocs d'herbe",
     "minecraft:sand/0" : "blocs de sable",
     "palamod:tile.amethyst.ore/0" : "minerais d'améthyste"
 }
+class AvoMarquesButtonView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+    
+    @discord.ui.button(label="📨 Voir A Vos Marques", style=discord.ButtonStyle.primary, custom_id="avosmarquesprivate")
+    async def see_avosmarques(self, interaction: discord.Interaction, button: discord.ui.Button):
+        api_url = "https://api.paladium.games/v1/paladium/faction/onyourmarks"
+        response = requests.get(api_url)
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            start_time = datetime.fromtimestamp(data["start"])
+            end_time = datetime.fromtimestamp(data["end"])
+            
+            goal_type = data['goalType']
+            goal_type_french = goal_type_translations.get(goal_type, goal_type)
+            
+            server_type = data['serverType']
+            server_type_french = server_type_translations.get(server_type, server_type)
+            
+            extra = data['extra']
+            extra_french = extra_translations.get(extra, extra)
+            
+            amount = data["amount"]
+            
+            quest = f"{goal_type_french} {amount} {extra_french}"
+            
+            embed = discord.Embed(title=f"{ailes_emoji} Événement A Vos Marques", color=0x2F2A9E)
+            embed.add_field(name=f"{quete_emoji} Quête", value=str(quest), inline=True)
+            embed.add_field(name="", value="", inline=True)
+            embed.add_field(name=f"{serveur_emoji} Serveur", value=server_type_french, inline=True)
+            embed.add_field(name="", value="", inline=True)
+            embed.add_field(name="", value=f"{debut_emoji} **Début**: `{start_time.strftime('%d / %m / %Y à %H h %M')}`", inline=False)
+            
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+        else:
+            embed = discord.Embed(title="Erreur", description="Impossible de récupérer les détails de l'événement 'À Vos Marques'.", color=0xFF0000)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+
 
 @bot.tree.command()
 async def avosmarques(interaction):
+    """Prochain A vos marques"""
     api_url = "https://api.paladium.games/v1/paladium/faction/onyourmarks"
     response = requests.get(api_url)
     
@@ -303,30 +475,6 @@ def create_embed(title=None, description=None, color=discord.Color.gold()):
 	embed.timestamp = datetime.utcnow()
 	embed.set_footer(text='', icon_url='') 
 	return embed
-
-@bot.command()
-async def top(interaction):
-    api_url = "https://api.paladium.games/v1/paladium/faction/leaderboard"
-    response = requests.get(api_url)
-    
-    if response.status_code == 200:
-        data = response.json()[0] 
-        
-        emblem = data["emblem"]
-        emblem_url = f"https://pictures.paladium.games/emblem/{emblem['backgroundId']}_{emblem['foregroundColor']}_{emblem['iconId']}.png"
-        
-        embed = discord.Embed(title=f"Top Faction: {data['name']}", color=0xf0eee9)
-        
-        embed.add_field(name="Position", value=data["position"], inline=True)
-        embed.add_field(name="Elo", value=data["elo"], inline=True)
-        embed.add_field(name="Trend", value=data["trend"], inline=True)
-        
-        embed.set_thumbnail(url=emblem_url)
-        
-        await interaction.response.send_message(embed=embed)
-    else:
-        embed = discord.Embed(title="Erreur", description="Impossible de récupérer le classement des factions.", color=0xFF0000, ephemeral=True)
-        await interaction.response.send_message(embed=embed)
         
 #######################################  ROLES  ###########################################
 
@@ -354,6 +502,7 @@ grades = load_grades()
 @bot.tree.command()
 @discord.app_commands.checks.has_role(faction)
 async def set_grade(interaction, *, grade: str):
+    """Obtenir le rôle discord correspondant à vôtre grade paladium"""
     if grade in ROLES:
         role_id = ROLES[grade]
         role = interaction.guild.get_role(int(role_id))
@@ -371,6 +520,8 @@ async def set_grade(interaction, *, grade: str):
 @bot.tree.command()
 @discord.app_commands.checks.has_role(faction)
 async def grade_search(interaction, grade: str):
+    """Rechercher quelqu'un possédant un grade spécifique"""
+    
     if grade in ROLES:
         role_id = ROLES[grade]
         role = interaction.guild.get_role(int(role_id))
@@ -514,11 +665,14 @@ async def me(interaction):
             coin_balances = json.load(f)
             if str(user_id) in coin_balances:
                 balance = coin_balances[str(user_id)]
-                message = await interaction.response.send_message(f"Vous possédez : `{balance}` {coin_emoji}.", ephemeral=True)
+                embed = create_small_embed(f"Vous possédez : `{balance}` {coin_emoji}.")
+                message = await interaction.response.send_message(embed=embed, ephemeral=True)
             else:
-                await interaction.response.send_message("Vous n'avez pas de solde de coins existant.", ephemeral=True)
+                embed = create_small_embed(f"Vous n'avez pas de solde de coins existant.{no_emoji}")
+                await interaction.response.send_message(embed=embed, ephemeral=True)
     except FileNotFoundError:
-        await interaction.response.send_message("Le fichier 'coin_balances.json' n'existe pas ou est vide.", ephemeral=True)
+        embed=create_small_embed(f"Le fichier de suavegarde n'existe pas ou est vide. {no_emoji} _Contact Addd78130 d'urgence !_ {ailes_emoji}")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 def save_coin_balances():
     with open("coin_balances.json", "w") as f:
         json.dump(coin_balances, f)
@@ -526,6 +680,7 @@ def save_coin_balances():
 @bot.tree.command()
 @discord.app_commands.checks.has_role(faction)
 async def baltop(interaction):
+    """Obtenir le baltop des coins de la faction"""
     with open("coin_balances.json", "r") as file:
         coin_balances = json.load(file)
     sorted_users = sorted(coin_balances.items(), key=lambda x: x[1], reverse=True)
@@ -543,14 +698,28 @@ async def baltop(interaction):
         field_str += f"{field_name}: {field_value}\n"
     embed.description = field_str
     await interaction.response.send_message(embed=embed)
-@bot.tree.command(name="buy", description="Faire une demande d'achat d'un lot")
+import json
+
+@bot.tree.command()
 @discord.app_commands.checks.has_role(faction)
 async def buy(interaction, *, item: str):
-    user = interaction.user
+    """Acheter un item présent dans le salon Economie"""
+    user = interaction.user    
 
     if discord.utils.get(user.roles, id=faction) is None:
-        await interaction.response.send_message("Vous n'avez pas la permission d'utiliser cette commande.", ephemeral=True)
+        await interaction.response.send_message(embed=create_small_embed("Vous n'avez pas la permission d'utiliser cette commande."), ephemeral=True)
         return
+
+    try:
+        with open("coin_balances.json", "r") as f:
+            coin_balances = json.load(f)
+            member_id_str = str(user.id)
+            if member_id_str in coin_balances:
+                balance = coin_balances[member_id_str]
+            else:
+                balance = 0
+    except FileNotFoundError:
+        balance = 0
 
     embed = discord.Embed(
         title="Demande d'achat de lot",
@@ -558,20 +727,22 @@ async def buy(interaction, *, item: str):
         color=0x00ff00
     )
     embed.add_field(name="Lot demandé", value=item)
+    embed.add_field(name="Solde de coins", value=f"{balance} {coin_emoji}")
 
     category = discord.utils.get(interaction.guild.categories, id=1190768986007277628)
     if category:
-        ticket_channel = await category.create_text_channel(f"achat-ticket-{user}")
+        ticket_channel = await category.create_text_channel(f"achat-{user}")
         await ticket_channel.set_permissions(user, read_messages=True, send_messages=True)
         await ticket_channel.send(embed=embed)
 
-        user_to_ping = interaction.guild.get_member(781524251332182016)
-        if user_to_ping:
-            await ticket_channel.send(f"{user_to_ping.mention}, l'utilisateur {user.mention} a fait une demande d'achat.")
+        role_to_ping = interaction.guild.get_member(1031253367311310969)
+        if role_to_ping:
+            await ticket_channel.send(f"{role_to_ping.mention}")
 
-        await interaction.response.send_message(f"Votre demande d'achat a été enregistrée. Un ticket a été ouvert pour le suivi {crown_emoji}.", ephemeral=True)
+        await interaction.response.send_message(embed=create_small_embed(f"Votre demande d'achat a été enregistrée. Un ticket : {ticket_channel} a été ouvert pour le suivi {crown_emoji}."), ephemeral=True)
     else:
-        await interaction.response.send_message("La catégorie spécifiée n'a pas été trouvée.", ephemeral=True)
+        await interaction.response.send_message(f"La catégorie spécifiée n'a pas été trouvée {no_emoji}.", ephemeral=True)
+
         
 ################################### ABSENCES ############################################
 
@@ -626,10 +797,136 @@ async def abs():
 		json.dump(ab, f, indent=6)
         
 ############################# GESTION DE FACTION ######################################
+CATEGORY_ID = 1197830831377494057
+STAFF_ROLE_ID = recruteur
+TICKET_LOG_CHANNEL_ID = 1121377434160345118
+REMOTE_CHANNEL_ID = 1073320610891059230
+
+@bot.tree.command(name="send_remote_button")
+@discord.app_commands.checks.has_role(staff_role)
+async def send_remote_button(interaction: discord.Interaction):
+    """Envoyer l'embed des ticket + Bouton"""
+    staff_role = interaction.guild.get_role(STAFF_ROLE_ID)
+    if staff_role not in interaction.user.roles:
+        embed=create_small_embed(f"Vous n'avez pas la permission d'utiliser cette commande {no_emoji}")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+
+    embed = discord.Embed(
+        title=f"{crown_emoji} Recrutement Elysiium !!!",
+        description=(
+            "Bienvenue à tous sur le merveilleux serveur de La Elysiium Faction.\n\n"
+            "Afin d'optimiser les recrutements, nous les avons organisés sous forme de ticket donc pour toute demande de recrutement, veuillez interagir avec le bouton ci-dessous "
+            "en vous rappelant que si vous créez un ticket, il sera fermé en cas de non-réponse dans un délai de 7 jours et que tout abus sera sanctionné !\n\n"
+            "Veuillez aussi remplir le formulaire ci-dessous:\n\n"
+            "[Formulaire de recrutement](https://docs.google.com/forms/d/e/1FAIpQLSfdSHDbH_MCrVljo1eEqVNkPoAJC0cZtGmcaaqrdxfndJXtBg/viewform)"
+        )
+    )
+
+    view = RemoteButtonView()
+    remote_channel = interaction.guild.get_channel(REMOTE_CHANNEL_ID)
+    if remote_channel:
+        await remote_channel.send(embed=embed, view=view)
+        embed=create_small_embed(f"Panel envoyée avec succès {yes_emoji}")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    else:
+        embed=create_small_embed(f"Le salon de télécommande spécifié n'a pas été trouvé {no_emoji}")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+
+class RemoteButtonView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="📨 Ouvrir un Ticket", style=discord.ButtonStyle.primary, custom_id="open_ticket")
+    async def open_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+
+
+        if CATEGORY_ID is None:
+            embed=create_small_embed(f"La catégorie pour les tickets n'a pas été configurée {no_emoji}")
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        category = interaction.guild.get_channel(CATEGORY_ID)
+        if not category or not isinstance(category, discord.CategoryChannel):
+            embed=create_small_embed(f"La catégorie spécifiée n'existe pas ou n'est pas valide {no_emoji}")
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        overwrites = {
+            interaction.guild.default_role: discord.PermissionOverwrite(read_messages=False),
+            interaction.user: discord.PermissionOverwrite(read_messages=True, send_messages=True, read_message_history=True),
+            get(interaction.guild.roles, id=STAFF_ROLE_ID): discord.PermissionOverwrite(read_messages=True, send_messages=True, read_message_history=True)
+        }
+        ticket_channel = await category.create_text_channel(f"ticket-{interaction.user.name}", overwrites=overwrites)
+        embed=create_small_embed(f"Ticket créé : {ticket_channel.mention} {ticket_emoji}")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+        embed = discord.Embed(
+            title="Bienvenue dans votre ticket",
+            description="Merci d'avoir ouvert un ticket. Un membre de l'équipe Recrutement sera bientôt avec vous.\n Assurez vous d'avoir remplis le formulaire : (https://docs.google.com/forms/d/e/1FAIpQLSfdSHDbH_MCrVljo1eEqVNkPoAJC0cZtGmcaaqrdxfndJXtBg/viewform)"
+        )
+
+
+        action_view = TicketActionView(ticket_channel.id, interaction.user.id)
+
+        log_channel = interaction.guild.get_channel(TICKET_LOG_CHANNEL_ID)
+        if log_channel:
+            embed2=create_embed(title='Ouvert', description=f"{ticket_channel.mention} créé par {interaction.user.mention}.", color=0xDFC57B)
+            await log_channel.send(embed=embed2)
+
+        await ticket_channel.send(embed=embed, view=action_view)
+
+
+
+class TicketActionView(discord.ui.View):
+    def __init__(self, ticket_channel_id, user_id):
+        super().__init__(timeout=None)
+        self.ticket_channel_id = ticket_channel_id
+        self.user_id = user_id
+
+    @discord.ui.button(label="Fermer le Ticket", style=discord.ButtonStyle.danger, custom_id="close_ticket")
+    async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        role = get(interaction.guild.roles, id=STAFF_ROLE_ID)
+        if role not in interaction.user.roles:
+            small_embed=create_small_embed(f"Vous n'avez pas les permissions pour fermer ce ticket, veuillez annuler vôtre demande {no_emoji}")
+            await interaction.response.send_message(embed=small_embed, ephemeral=True)
+            return
+
+        log_channel = interaction.guild.get_channel(1121377434160345118)
+        ticket_channel = interaction.guild.get_channel(self.ticket_channel_id)
+        if ticket_channel:
+            if 1==1:
+                embed_log=create_embed(title="Fermeture", description=f"{ticket_channel.name} fermé par {interaction.user.mention}.", color=0xDFC57B)
+                await log_channel.send(embed=embed_log)
+            await ticket_channel.delete()
+            user=interaction.user
+            embed_mp=create_small_embed(f"Ticket fermé avec succès.{yes_emoji}")
+            await user.send(embed=embed_mp)
+            log_channel = interaction.guild.get_channel(TICKET_LOG_CHANNEL_ID)
+
+    @discord.ui.button(label="Annuler la Demande", style=discord.ButtonStyle.secondary, custom_id="cancel_ticket")
+    async def cancel_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id:
+            embed_stop=create_small_embed(f"Seul l'utilisateur ayant ouvert le ticket peut annuler la demande {no_emoji}")
+            await interaction.response.send_message(embed=embed_stop, ephemeral=True)
+            return
+
+        ticket_channel = interaction.guild.get_channel(self.ticket_channel_id)
+        if ticket_channel:
+            await ticket_channel.delete()
+            log_channel = interaction.guild.get_channel(TICKET_LOG_CHANNEL_ID)
+            if log_channel:
+                embed_log2=create_embed(title="Annulation de Ticket", description=f"Ticket {ticket_channel.name} annulé par {interaction.user.mention}.", color=0xDFC57B)
+                user=interaction.user
+                await user.send(embed=embed_log2)
+                await log_channel.send(embed=embed_log2)
 
 @bot.tree.command()
-@discord.app_commands.checks.has_any_role(staff,recruteur)
+@discord.app_commands.checks.has_any_role(staff_role,recruteur)
 async def kick(interaction, member: discord.Member, reason: str):
+    """Kick quelqu'un de la faction"""
     guild = interaction.guild
     with open("coin_balances.json", "r") as f:
         coin_balances = json.load(f)
@@ -658,6 +955,7 @@ async def kick(interaction, member: discord.Member, reason: str):
 @bot.tree.command()
 @discord.app_commands.checks.has_role(recruteur)
 async def admis(interaction, member: discord.Member, specialisation: int):
+    """Accepter quelqu'un dans la faction"""
     guild = interaction.guild
     babysiium = guild.get_role(1031253356234166352)
     farmeur = guild.get_role(1185671072616550491)
@@ -739,31 +1037,38 @@ async def non(interaction):
     await handle_reponse(interaction.user, "non", interaction)
     
 @bot.tree.command()
-@discord.app_commands.checks.has_role(faction)
+@discord.app_commands.checks.has_role(chef_role)
 async def response(interaction):
+    await interaction.response.defer()
+
     oui_count = 0
     non_count = 0
     jsp_count = 0
     total = len(reponses)
-
-    for reponse in reponses.values():
+    
+    embed = discord.Embed(title="Réponses aux questions", color=0x52455C)
+    
+    for user_id, reponse in reponses.items():
+        user = await bot.fetch_user(int(user_id))
+        user_name = user.name if user else user_id
+        embed.add_field(name=user_name, value=reponse, inline=True)
+        
         if reponse == "oui":
             oui_count += 1
         elif reponse == "non":
             non_count += 1
         elif reponse == "jsp":
             jsp_count += 1
-
+    
     oui_percent = (oui_count / total) * 100 if total > 0 else 0
     non_percent = (non_count / total) * 100 if total > 0 else 0
     jsp_percent = (jsp_count / total) * 100 if total > 0 else 0
 
-    embed = discord.Embed(title="Réponses aux questions", color=0x52455C)
-    embed.add_field(name="Oui", value=f"{oui_count} ({oui_percent:.2f}%)", inline=True)
-    embed.add_field(name="JSP", value=f"{jsp_count} ({jsp_percent:.2f}%)", inline=True)
-    embed.add_field(name="Non", value=f"{non_count} ({non_percent:.2f}%)", inline=True)
+    embed.add_field(name="Oui", value=f"{oui_count} ({oui_percent:.2f}%)", inline=False)
+    embed.add_field(name="JSP", value=f"{jsp_count} ({jsp_percent:.2f}%)", inline=False)
+    embed.add_field(name="Non", value=f"{non_count} ({non_percent:.2f}%)", inline=False)
 
-    await interaction.response.send_message(embed=embed)
+    await interaction.followup.send(embed=embed)
 
 @bot.tree.command()
 @discord.app_commands.checks.has_role(faction)
@@ -790,7 +1095,7 @@ async def handle_reponse(member, reponse, interaction):
     await member.send(embed=embed)
     
 @bot.tree.command()
-@discord.app_commands.checks.has_role(staff)
+@discord.app_commands.checks.has_role(staff_role)
 async def send(interaction, role_name: str, *, message: str):
         role = discord.utils.get(interaction.guild.roles, name=role_name)
         if role is None:
@@ -815,32 +1120,10 @@ async def spam(interaction: discord.Interaction,member: discord.Member,nombre: i
 	for i in range(nombre-1):
 		await interaction.channel.send(member.mention)
 
-@bot.tree.command(name="request")
-@discord.app_commands.checks.has_role(faction)
-async def request(interaction):
-    emoji='<:Capture_d_cran_20230210_224124re:1073722439051255898>'
-    await interaction.response.send_message(f"{emoji}")
-	###"""ticket_category_id = 1225886169011589212
-    ###ticket_category = discord.utils.get(interaction.guild.categories, id=ticket_category_id)
-    ###user = interaction.user
-    ###if not ticket_category:
-        ###return await interaction.response.send_message("La catégorie spécifiée n'a pas été trouvée.")
-
-    ###ticket_channel = await ticket_category.create_text_channel(f"ticket-{user}")
-    ###await ticket_channel.set_permissions(interaction.guild.default_role, read_messages=False)
-    ###await ticket_channel.set_permissions(interaction.user, read_messages=True, send_messages=True)
-    ###member_or_role = discord.utils.get(ticket_channel.guild.members, id=1031253367311310969)
-    ###if member_or_role:
-        ###await ticket_channel.set_permissions(member_or_role, read_message=True, send_message=True)
-    ###else:
-       ### print("Membre ou rôle non trouvé avec l'ID spécifiée.")
-    ###await ticket_channel.send(f"Bonjour {interaction.user.mention} ! Votre demande pour donner vôtre Quota a été reçue.")
-
-    ###await interaction.response.send_message(f"Votre demande a été enregistrée. Un ticket a été ouvert : {ticket_channel.mention}")"""
-
 @bot.tree.command()
 @discord.app_commands.checks.has_role(faction)
 async def help(interaction):
+    """Afficher la liste des commandes"""
     embed = discord.Embed(title="Commandes disponibles", color=discord.Color.blue())
     guild = interaction.guild
     factiona = guild.get_role(1031253372327698442)
@@ -893,7 +1176,7 @@ async def help(interaction):
     await interaction.response.send_message(embed=embed)
 
 
-def create_small_embed(description=None, color=discord.Color.dark_gray()):
+def create_small_embed(description=None, color=0xA89494):
 	embed = discord.Embed(
 		description=description,
 		color=color
@@ -916,6 +1199,7 @@ def save_suggestions(suggestions):
 @bot.tree.command()
 @discord.app_commands.checks.has_role(faction)
 async def suggestions(interaction,*,suggestion: str):
+    """Soumettre une suggestion"""
     suggestions_dict = load_suggestions()
     suggestions_dict[str(interaction.user)] = suggestion
     save_suggestions(suggestions_dict)
@@ -1080,8 +1364,9 @@ async def on_command_error(interaction, error):
 ############################## SANCTIONS #########################################
 
 @bot.tree.command()
-@discord.app_commands.checks.has_role(staff)
+@discord.app_commands.checks.has_role(staff_role)
 async def warn(interaction, member: discord.Member, *, reason: str):
+    """Warn quelqu'un"""
     executor = interaction.user
     guild = interaction.guild
 
@@ -1114,42 +1399,35 @@ async def warn(interaction, member: discord.Member, *, reason: str):
 
 @bot.tree.command()
 @discord.app_commands.checks.has_permissions(administrator=True)
-async def ban(interaction: discord.Interaction, member:discord.Member,*,raison:str):
-	'''Ban'''
-	guild = interaction.guild
-	embed_ = discord.Embed(title=f'{ban_emoji} Ban {ban_emoji}',
-		description=f"Vous avez été banni du serveur Elysiium Fation pour la raison suivante : {raison}",
-		color=discord.Color.red())
-	try:
-		await member.send(embed=embed_)
-		message =f'Le message a bien été envoyé à {member.mention}'
-	except:
-		pass
-		message =f"Le message n'a pas pu être envoyé à {member.mention} mais il a bien été banni"
-	await guild.ban(member,reason=raison)
-	log = bot.get_channel([str(interaction.guild.id)])
-	await log.send(embed=create_small_embed(member.mention + ' à été ban par ' + interaction.user.mention + " pour " + raison))
-	await interaction.response.send_message(embed=create_small_embed(message), ephemeral=True)
+async def ban(interaction: discord.Interaction, member: discord.Member, *, raison: str):
+    '''Ban'''
+    guild = interaction.guild
+    embed_ = discord.Embed(
+        title=f'{ban_emoji} Ban {ban_emoji}',
+        description=f"Vous avez été banni du serveur Elysiium Faction pour la raison suivante : **{raison}**",
+        color=discord.Color.red()
+    )
+    try:
+        await member.send(embed=embed_)
+        message = f'{member} à été banni {ban_emoji}'
+    except:
+        message = f"Le message n'a pas pu être envoyé à {member} mais il a bien été banni"
 
-@bot.tree.command()
-@discord.app_commands.checks.has_permissions(administrator=True)
-async def unban(interaction: discord.Interaction, member:discord.User,*,raison:str):
-	'''unban quelqu'un'''
-	if member.id == interaction.user.id:
-		await interaction.response.send_message(embed=create_small_embed("Tu ne peux pas faire cela",discord.Color.red(), ephemeral=True))
-		return
-	guild = interaction.guild
-	await guild.unban(member,reason=raison)
-	log = bot.get_channel([str(interaction.guild.id)])
-	await log.send(embed=create_small_embed(member.mention + ' à été unban par ' + interaction.user.mention + " pour " + raison))
-	await interaction.response.send_message(embed=create_small_embed(member.mention+"à bien été déban", ephemeral=True))
+    await guild.ban(member, reason=raison)
+
+    log_channel = bot.get_channel(LOG_CHANNEL_ID)
+    await log_channel.send(embed=create_small_embed(f'{member.mention} a été ban par {interaction.user.mention} pour {raison}'))
+
+    await interaction.response.send_message(f"{yes_emoji}", ephemeral=True)
+
 
 
 ###################################### RESSOURCES ET GESTIONS #######################################
 
 @bot.tree.command()
-@discord.app_commands.checks.has_any_role(recup,staff)
+@discord.app_commands.checks.has_any_role(recup,staff_role)
 async def a_ressource(interaction, ressource: str, quantite: int):
+    """Ajouter des ressources pour un projet"""
     try:
         if not os.path.isfile(json_bc_filename):
             with open(json_bc_filename, "w") as file:
@@ -1172,8 +1450,9 @@ async def a_ressource(interaction, ressource: str, quantite: int):
         print(f"Une erreur s'est produite lors de l'ajout de ressources : {e}")
 
 @bot.tree.command()
-@discord.app_commands.checks.has_any_role(staff,recup)
+@discord.app_commands.checks.has_any_role(staff_role,recup)
 async def ressources(interaction):
+    """afficher les ressources actuelles d'un projet"""
     try:
 
         with open(json_bc_filename, "r") as file:
@@ -1189,8 +1468,9 @@ async def ressources(interaction):
         print(f"Une erreur s'est produite lors de l'affichage des ressources : {e}")
 
 @bot.tree.command()
-@discord.app_commands.checks.has_any_role(staff,recup)
+@discord.app_commands.checks.has_any_role(staff_role,recup)
 async def r_ressource(interaction, ressource: str, quantite: int):
+    """Retirer des ressources d'un projet"""
     try:
         with open(json_bc_filename, "r") as file:
             ressources = json.load(file)
@@ -1200,7 +1480,8 @@ async def r_ressource(interaction, ressource: str, quantite: int):
             if ressources[ressource] <= 0:
                 del ressources[ressource]
         else:
-            await interaction.response.send_message(f"Ressource non trouvée : {ressource}", ephemeral=True)
+            embed = create_small_embed(f"Ressource non trouvée : {ressource}", ephemeral=True)
+            await interaction.response.send_message(embed=embed)
             return
 
         with open(json_bc_filename, "w") as file:
@@ -1232,7 +1513,3 @@ async def update_status():
             print("Le bot n'est dans aucun serveur.")
     except Exception as e:
         print(f"Une erreur est survenue: {e}")
-
-@update_status.before_loop
-async def before_update_status():
-    await bot.wait_until_ready()
