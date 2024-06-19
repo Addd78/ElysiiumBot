@@ -15,7 +15,7 @@ from discord.ext import commands
 from collections import defaultdict
 from datetime import datetime, timedelta
 fleche_rose_emoji = '<a:flecheRose:1242544763656208475>'
-etoile_boost_emoji = '<:LegendBoost:1243672429726011505>'
+boost_emoji = '<:LegendBoost:1243672429726011505>'
 ticket_emoji = '<:Ticket:1242794933539180606>'
 alarme_emoji = '<a:red:1242544438706700390>'
 feublanc_emoji = '<a:whitefire:1242810223589195913>'
@@ -89,9 +89,10 @@ intents = discord.Intents().all()
 
 class PersistentViewBot(commands.Bot):
     def __init__(self):
-        super().__init__(command_prefix=commands.when_mentioned_or('CAS'), help_command=None, case_insensitive=True, intents=intents, timeout=None)
+        super().__init__(command_prefix=commands.when_mentioned_or('CAS'), help_command=None, case_insensitive=True, intents=discord.Intents().all(), timeout=None)
+    
     async def setup_hook(self) -> None:
-        views = [RouletteView(), RemoteButtonView(), AvoMarquesButtonView()]
+        views = [RouletteView(), RemoteButtonView(), AvoMarquesButtonView(), ItemSelectorView()]
         for element in views:
             self.add_view(element)
         
@@ -107,7 +108,7 @@ async def sync(ctx):
 
 tree = bot.tree
 
-def run_bot(token='TOKEN', debug=False):
+def run_bot(token=TOTO, debug=False):
     if debug: print(bot._connection.loop)
     bot.run(token)
     if debug: print(bot._connection.loop)
@@ -135,7 +136,8 @@ def sauvegarder_paris(data):
 async def parier(interaction, montant: int):
     """Parier une somme pour la Roulette"""
     if montant <= 0:
-        await interaction.response.send_message("Le montant du pari doit être supérieur à zéro.", ephemeral=True)
+        embed = create_small_embed(f"Le montant du pari doit être supérieur à 0 {dollar_emoji}")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
         return
 
     data = charger_paris()
@@ -157,7 +159,7 @@ async def parier(interaction, montant: int):
 async def roulette(interaction):
     """Créer la roulette"""
     view = RouletteView()
-    embed = create_small_embed(f"{feublanc_emoji} Appuyez sur le bouton pour démarrer la roulette ")
+    embed = create_embed(title="Roulette 🎰", description=f"{boost_emoji} Appuyez sur le bouton pour démarrer la roulette ")
     await interaction.response.send_message(embed=embed, view=view)
     
 @bot.tree.command(name="actu_roulette")
@@ -165,12 +167,13 @@ async def roulette(interaction):
 async def actu_roulette(interaction: discord.Interaction):
     """Etat de la Roulette"""
     if not interaction.guild:
-        await interaction.response.send_message("Cette commande ne peut être utilisée que dans un serveur.", ephemeral=True)
+        embed = create_small_embed(f"Cette commande ne peut être utilisée que dans un serveur {moderator_emoji}")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
         return
     
     data = charger_paris()
     if not data["bets"]:
-        embed = create_small_embed("Aucun pari n'a été placé.{no_emoji}")
+        embed = create_small_embed(f"Aucun pari n'a été placé. {no_emoji}")
         await interaction.response.send_message(embed=embed, ephemeral=True)
         return
 
@@ -274,6 +277,7 @@ async def player_profil(interaction, username: str):
         data = response.json()
         embed = discord.Embed(title=f"{pala_emoji} Profil de {data['username']}", color=0xFFD700) 
         embed.add_field(name=f"{faction_emoji} Faction", value=data["faction"], inline=True)
+        embed.add_field(name="", value="", inline=True)
         embed.add_field(name="", value="", inline=True)
         embed.add_field(name=f"{alchi_emoji} Alchimiste", value=" "*10 + str(data["jobs"]["alchemist"]["level"]), inline=True)
         embed.add_field(name="", value="      ", inline=True)
@@ -510,9 +514,11 @@ async def set_grade(interaction, *, grade: str):
             await interaction.user.add_roles(role)
             grades[str(interaction.user.id)] = grade
             save_grades(grades)
-            await interaction.response.send_message(f"Grade {grade} attribué avec succès.", ephemeral=True)
+            embed=create_small_embed(f"{grade} attribué avec succès.")
+            await interaction.response.send_message(embed=embed, ephemeral=True)
         else:
-            await interaction.response.send_message("Le rôle correspondant n'a pas été trouvé.", ephemeral=True)
+            embed=create_small_embed(f"Le rôle correspondant n'a pas été trouvé {no_emoji}")
+            await interaction.response.send_message(embed=embed, ephemeral=True)
     else:
         embed = create_small_embed("Grade invalide. Les grades valides sont : Endium, Paladin, Titan, Trixium, Trixium+.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -534,9 +540,11 @@ async def grade_search(interaction, grade: str):
             )
             await interaction.response.send_message(embed=embed)
         else:
-            await interaction.response.send_message("Le rôle correspondant n'a pas été trouvé.", ephemeral=True)
+            embed=create_small_embed(f"Le rôle correspondant n'a pas été trouvé {no_emoji}")
+            await interaction.response.send_message(embed=embed, ephemeral=True)
     else:
-        await interaction.response.send_message("Grade invalide. Les grades valides sont : Endium, Paladin, Titan, Trixium, Trixium+.", ephemeral=True)
+        embed=create_small_embed(f"Le rôle correspondant n'a pas été trouvé {no_emoji}")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 ######################################## RUBRIQUE DES METIERS  ########################################################
 
@@ -552,18 +560,18 @@ async def niveau_add(interaction, metier : str, niveau : int):
     """ajouter ou mettre à jour un niveau"""
     metiers_valides = ["alchi", "hunter", "miner", "farmer"]
     if metier.lower() not in metiers_valides:
-        await interaction.response.send_message("Métier invalide. Veuillez choisir parmi **alchi, hunter, miner, farmer**.", ephemeral=True)
+        embed=create_small_embed(f"Métier invalide. Veuillez choisir parmi {fleche_emoji} **alchi, hunter, miner, farmer**.")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
         return
 
     utilisateur = str(interaction.user.id)
     if utilisateur not in niveaux:
         niveaux[utilisateur] = {}
-
     niveaux[utilisateur][metier.lower()] = int(niveau)
     with open('niveaux.json', 'w') as f:
         json.dump(niveaux, f)
-
-    await interaction.response.send_message(f"Niveau de {metier} mis à jour.",ephemeral=True)
+    embed=create_small_embed(f"Niveau de {metier} mis à jour {boost_emoji}")
+    await interaction.response.send_message(embed=embed,ephemeral=True)
 
 @bot.tree.command()
 @discord.app_commands.checks.has_role(faction)
@@ -571,7 +579,8 @@ async def niveau(interaction, metier : str):
     """Afficher le niveaux le plus élevé d'un métier"""
     metiers_valides = ["alchi", "hunter", "miner", "farmer"]
     if metier.lower() not in metiers_valides:
-        await interaction.response.send_message("Métier invalide. Veuillez choisir parmi **alchi, hunter, miner ou farmer**.")
+        embed=create_small_embed(f"Métier invalide. Veuillez choisir parmi **alchi, hunter, miner ou farmer** {no_emoji}")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
         return
 
     niveau_max = 0
@@ -585,11 +594,14 @@ async def niveau(interaction, metier : str):
     if personne_max:
         membre = interaction.guild.get_member(int(personne_max))
         if membre:
-            await interaction.response.send_message(f"La personne {membre.mention} est niveau {niveau_max} en métier {metier}.", ephemeral=True)
+            embed=create_small_embed(f"La personne {membre.mention} est niveau {niveau_max} en métier {metier}.")
+            await interaction.response.send_message(embed=embed, ephemeral=True)
         else:
-            await interaction.response.send_message("Impossible de trouver cet utilisateur.", ephemeral=True)
+            embed=create_small_embed(f"Impossible de trouver cet utilisateur {red_emoji}")
+            await interaction.response.send_message(embed=embed, ephemeral=True)
     else:
-        await interaction.response.send_message("Aucun utilisateur n'a encore défini de niveau pour ce métier.", ephemeral=True)
+        embed=create_small_embed(f"Aucun utilisateur n'a encore défini de niveau pour ce métier.{boost_emoji}")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
     
 ###################################### COINS #####################################################
 
@@ -622,7 +634,8 @@ async def g_coin(interaction: discord.Interaction, member: discord.Member, amoun
     old_balance = coin_balances.get(member_id_str, 0)
     coin_balances[member_id_str] += amount
     new_balance = coin_balances[member_id_str]
-    await interaction.response.send_message(f"{member.mention} a reçu {amount} {coin_emoji}.")
+    embed=create_small_embed(f"{member.mention} a reçu```{amount}``` {coin_emoji}.")
+    await interaction.response.send_message(embed=embed)
     save_coin_balances()
                                             
 @bot.tree.command()
@@ -631,12 +644,14 @@ async def r_coin(interaction: discord.Interaction, member: discord.Member, amoun
     """Retirer des coins"""
     member_id_str = str(member.id)
     if member_id_str not in coin_balances:
-        await interaction.response.send_message(f"{member.mention} n'a pas de solde de coins existant.")
+        embed=create_small_embed(f"{member.mention} n'a pas de solde de coins existant.")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
     else:
         old_balance = coin_balances[member_id_str]
         coin_balances[member_id_str] = max(0, old_balance - amount)
         new_balance = coin_balances[member_id_str]
-        await interaction.response.send_message(f"{member.mention} a perdu {amount} {coin_emoji}.")
+        embed=create_small_embed(f"{member.mention} a perdu ```{amount}``` {coin_emoji}.")
+        await interaction.response.send_message(embed=embed)
         save_coin_balances()
                                             
 @bot.tree.command()
@@ -649,11 +664,14 @@ async def coins(interaction: discord.Interaction, member: discord.Member):
             member_id_str = str(member.id)
             if member_id_str in coin_balances:
                 balance = coin_balances[member_id_str]
-                await interaction.response.send_message(f"Le solde de {member.mention} est de {balance} {coin_emoji}.", ephemeral=True)
+                embed=create_small_embed(f"Le solde de {member.mention} est de ```{balance}``` {coin_emoji}")
+                await interaction.response.send_message(embed=embed, ephemeral=True)
             else:
-                await interaction.response.send_message(f"L'utilisateur {member.mention} n'a pas de solde de coins existant.", ephemeral=True)
+                embed=create_small_embed(f"L'utilisateur {member.mention} n'a pas de solde de coins existant.")
+                await interaction.response.send_message(embed=embed, ephemeral=True)
     except FileNotFoundError:
-        await interaction.response.send_message(f"Le fichier 'coin_balances.json' n'existe pas ou est vide.", ephemeral=True)
+        embed=create_small_embed(f"Le fichier 'coin_balances.json' n'existe pas ou est vide{red_emoji}")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
                                             
 @bot.tree.command()
 @discord.app_commands.checks.has_role(faction)
@@ -698,51 +716,167 @@ async def baltop(interaction):
         field_str += f"{field_name}: {field_value}\n"
     embed.description = field_str
     await interaction.response.send_message(embed=embed)
-import json
+
+items_prices = {
+    "P4U3": 2400,
+    "1k": 800,
+    "5k": 3200,
+    "Double XP": 7000,
+    "Sealed XP": 800,
+    "Bonbon métier": 10000
+}
+
+def load_data(file):
+    try:
+        with open(file, "r") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+def save_data(file, data):
+    with open(file, "w") as f:
+        json.dump(data, f, indent=4)
+
+class ItemSelector(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label="1k💲", description=f"800 🪙"),
+            discord.SelectOption(label="Double XP", description=f"7000 🪙"),
+            discord.SelectOption(label="Sealed XP", description=f"800 🪙"),
+            discord.SelectOption(label="P4U3", description=f"2400 🪙"),
+            discord.SelectOption(label="5k💲", description=f"3200 🪙"),
+            discord.SelectOption(label="Bonbon métier", description=f"10000 🪙")
+        ]
+        super().__init__(placeholder="Choisissez un item à acheter", min_values=1, max_values=1, options=options, custom_id='Selectionneritem')
+
+    async def callback(self, interaction: discord.Interaction):
+        selected_item = self.values[0]
+        user_id = str(interaction.user.id)
+        coin_balances = load_data("coin_balances.json")
+
+        if selected_item not in items_prices:
+            await interaction.response.send_message("L'item sélectionné n'existe pas.", ephemeral=True)
+            return
+
+        item_price = items_prices[selected_item]
+
+        if user_id in coin_balances and coin_balances[user_id] >= item_price:
+            coin_balances[user_id] -= item_price
+            save_data("coin_balances.json", coin_balances)
+            
+            embed = discord.Embed(
+                title="Demande d'achat de lot",
+                description=f"{interaction.user.mention} souhaite acheter le lot suivant :",
+                color=0xE2EAF4
+            )
+            embed.add_field(name="Lot demandé", value=selected_item)
+            embed.add_field(name="Solde de coins", value=f"{coin_balances[user_id]} coins")
+
+            category = discord.utils.get(interaction.guild.categories, id=1190768986007277628)
+            if category:
+                ticket_channel = await category.create_text_channel(f"achat-{interaction.user}")
+                await ticket_channel.set_permissions(interaction.user, read_messages=True, send_messages=True, read_message_history=True)
+
+                role_to_ping = interaction.guild.get_member(1031253367311310969)
+                if role_to_ping:
+                    await ticket_channel.send(f"{role_to_ping.mention}")
+
+                ticket_data = {
+                    "user_id": user_id,
+                    "refund_amount": item_price,
+                    "item": selected_item,
+                    "channel_id": ticket_channel.id
+                }
+                all_tickets = load_data("tickets.json")
+                all_tickets[user_id] = ticket_data
+                save_data("tickets.json", all_tickets)
+                staff_role_id=1031253367311310969
+
+                view = TicketBuyActionsView(user_id, item_price, selected_item, staff_role_id)
+                await ticket_channel.send(embed=embed, view=view)
+
+                await interaction.response.send_message(embed=create_small_embed(f"Votre demande d'achat a été enregistrée. Un ticket : {ticket_channel} a été ouvert pour le suivi."), ephemeral=True)
+            else:
+                await interaction.response.send_message("La catégorie spécifiée n'a pas été trouvée.", ephemeral=True)
+        else:
+            await interaction.response.send_message("Vous n'avez pas assez de coins pour acheter cet item.", ephemeral=True)
+
+class ItemSelectorView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(ItemSelector())
+
+class CancelButton(discord.ui.Button):
+    def __init__(self, user_id, refund_amount, item):
+        super().__init__(label="Annuler la demande d'achat", style=discord.ButtonStyle.danger, custom_id="cancel_purchase")
+        self.user_id = user_id
+        self.refund_amount = refund_amount
+        self.item = item
+
+    async def callback(self, interaction: discord.Interaction):
+        if str(interaction.user.id) != self.user_id:
+            await interaction.response.send_message("Vous n'avez pas la permission d'utiliser ce bouton.", ephemeral=True)
+            return
+
+        coin_balances = load_data("coin_balances.json")
+        coin_balances[str(interaction.user.id)] += self.refund_amount
+        save_data("coin_balances.json", coin_balances)
+
+        await interaction.channel.delete()
+        await interaction.user.send(f"Votre demande d'achat pour {self.item} a été annulée et vous avez été remboursé de {self.refund_amount} coins.")
+
+class CloseTicketButton(discord.ui.Button):
+    def __init__(self, staff_role_id):
+        super().__init__(label="Fermer le ticket", style=discord.ButtonStyle.primary, custom_id="close_ticket")
+        self.staff_role_id = staff_role_id
+
+    async def callback(self, interaction: discord.Interaction):
+        member = interaction.guild.get_member(interaction.user.id)
+        if member is None or discord.utils.get(member.roles, id=self.staff_role_id) is None:
+            await interaction.response.send_message("Vous n'avez pas la permission d'utiliser ce bouton.", ephemeral=True)
+            return
+
+        await interaction.channel.delete()
+
+class TicketBuyActionsView(discord.ui.View):
+    def __init__(self, user_id, refund_amount, item, staff_role_id):
+        super().__init__(timeout=None)
+        self.add_item(CancelButton(user_id, refund_amount, item))
+        self.add_item(CloseTicketButton(staff_role_id))
+
+
+@bot.event
+async def on_ready():
+    print(f'Connecté en tant que {bot.user}!')
+    all_tickets = load_data("tickets.json")
+    for ticket_data in all_tickets.values():
+        user_id = ticket_data["user_id"]
+        refund_amount = ticket_data["refund_amount"]
+        item = ticket_data["item"]
+        channel_id = ticket_data["channel_id"]
+        staff_role_id = 1031253367311310969  
+        channel = bot.get_channel(channel_id)
+        if channel:
+            view = TicketBuyActionsView(user_id, refund_amount, item, staff_role_id)
+            bot.add_view(view, message_id=channel.last_message_id)
+        all_tickets_rc = load_ticket_data_rc("ticket_recrutement.json")
+    for ticket_data_rc in all_tickets_rc.values():
+        user_id_rc = ticket_data_rc["user_id"]
+        channel_id_rc = ticket_data_rc["channel_id"]
+
+        channel_rc = bot.get_channel(channel_id_rc)
+        if channel_rc:
+            view_rc = TicketActionView(channel_id_rc, user_id_rc)
+            bot.add_view(view_rc, message_id=channel_rc.last_message_id)
+
 
 @bot.tree.command()
-@discord.app_commands.checks.has_role(faction)
-async def buy(interaction, *, item: str):
-    """Acheter un item présent dans le salon Economie"""
-    user = interaction.user    
-
-    if discord.utils.get(user.roles, id=faction) is None:
-        await interaction.response.send_message(embed=create_small_embed("Vous n'avez pas la permission d'utiliser cette commande."), ephemeral=True)
-        return
-
-    try:
-        with open("coin_balances.json", "r") as f:
-            coin_balances = json.load(f)
-            member_id_str = str(user.id)
-            if member_id_str in coin_balances:
-                balance = coin_balances[member_id_str]
-            else:
-                balance = 0
-    except FileNotFoundError:
-        balance = 0
-
-    embed = discord.Embed(
-        title="Demande d'achat de lot",
-        description=f"L'utilisateur {user.mention} souhaite acheter le lot suivant :",
-        color=0x00ff00
-    )
-    embed.add_field(name="Lot demandé", value=item)
-    embed.add_field(name="Solde de coins", value=f"{balance} {coin_emoji}")
-
-    category = discord.utils.get(interaction.guild.categories, id=1190768986007277628)
-    if category:
-        ticket_channel = await category.create_text_channel(f"achat-{user}")
-        await ticket_channel.set_permissions(user, read_messages=True, send_messages=True)
-        await ticket_channel.send(embed=embed)
-
-        role_to_ping = interaction.guild.get_member(1031253367311310969)
-        if role_to_ping:
-            await ticket_channel.send(f"{role_to_ping.mention}")
-
-        await interaction.response.send_message(embed=create_small_embed(f"Votre demande d'achat a été enregistrée. Un ticket : {ticket_channel} a été ouvert pour le suivi {crown_emoji}."), ephemeral=True)
-    else:
-        await interaction.response.send_message(f"La catégorie spécifiée n'a pas été trouvée {no_emoji}.", ephemeral=True)
-
+async def send_buy(interaction):
+    view = ItemSelectorView()
+    embed = discord.Embed(title="Economie de la Elysiium 🪙", description="1 Quota = 1250 coins et 1 surplus = 450 coins")
+    channel = bot.get_channel(1233099934312562728)
+    await channel.send(embed=embed, view=view)
+    await interaction.response.send_message("Panneau d'achat envoyé.", ephemeral=True)
         
 ################################### ABSENCES ############################################
 
@@ -755,10 +889,10 @@ async def absence(interaction: discord.Interaction,raison:str,date:str) -> None:
 		return
 	try:		
 		if datetime.strptime(date,'%d/%m/%Y') < datetime.now():
-			await interaction.response.send_message("La date n'est pas valide, merci de recommencer avec une date valide", ephemeral=True)
+			await interaction.response.send_message(create_small_embed(f"La date n'est pas valide, merci de recommencer avec une date valide {no_emoji}"), ephemeral=True)
 			return
 	except:
-		await interaction.response.send_message("La date n'est pas valide, merci de recommencer avec une date valide", ephemeral=True)
+		await interaction.response.send_message(create_small_embed(f"La date n'est pas valide, merci de recommencer avec une date valide {no_emoji}"), ephemeral=True)
 		return
 	with open('absence.json', 'r') as f:
 		ab = json.load(f)
@@ -769,10 +903,10 @@ async def absence(interaction: discord.Interaction,raison:str,date:str) -> None:
 	with open('absence.json', 'w') as f:
 		json.dump(ab, f, indent=6)
 	chanel = bot.get_channel(1087120601325506611)
-	await chanel.send(f"{interaction.user.mention} est absent jusqu'au {date} pour {raison}")
+	await chanel.send(create_embed(title=f"Absence de {interaction.user.mention}", description=f"{interaction.user.mention} est absent jusqu'au {date} pour {raison}"))
 	role = interaction.guild.get_role(1215396472162488381)
 	await interaction.user.add_roles(role)
-	await interaction.response.send_message('Votre absence a bien été prise en compte', ephemeral=True)
+	await interaction.response.send_message(create_small_embed(f'Votre absence a bien été prise en compte {yes_emoji}'), ephemeral=True)
 
 @tasks.loop(seconds = 360)
 async def abs():
@@ -802,13 +936,24 @@ STAFF_ROLE_ID = recruteur
 TICKET_LOG_CHANNEL_ID = 1121377434160345118
 REMOTE_CHANNEL_ID = 1073320610891059230
 
+def load_ticket_data_rc(file):
+    try:
+        with open(file, "r") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+def save_ticket_data_rc(file, data):
+    with open(file, "w") as f:
+        json.dump(data, f, indent=4)
+
 @bot.tree.command(name="send_remote_button")
-@discord.app_commands.checks.has_role(staff_role)
-async def send_remote_button(interaction: discord.Interaction):
+@discord.app_commands.checks.has_role(STAFF_ROLE_ID)
+async def send_remote_button_rc(interaction: discord.Interaction):
     """Envoyer l'embed des ticket + Bouton"""
-    staff_role = interaction.guild.get_role(STAFF_ROLE_ID)
-    if staff_role not in interaction.user.roles:
-        embed=create_small_embed(f"Vous n'avez pas la permission d'utiliser cette commande {no_emoji}")
+    staff_role_rc = interaction.guild.get_role(STAFF_ROLE_ID)
+    if staff_role_rc not in interaction.user.roles:
+        embed = create_small_embed(f"Vous n'avez pas la permission d'utiliser cette commande {no_emoji}")
         await interaction.response.send_message(embed=embed, ephemeral=True)
         return
 
@@ -824,104 +969,113 @@ async def send_remote_button(interaction: discord.Interaction):
     )
 
     view = RemoteButtonView()
-    remote_channel = interaction.guild.get_channel(REMOTE_CHANNEL_ID)
-    if remote_channel:
-        await remote_channel.send(embed=embed, view=view)
-        embed=create_small_embed(f"Panel envoyée avec succès {yes_emoji}")
+    remote_channel_rc = interaction.guild.get_channel(REMOTE_CHANNEL_ID)
+    if remote_channel_rc:
+        await remote_channel_rc.send(embed=embed, view=view)
+        embed = create_small_embed(f"Panel envoyé avec succès {yes_emoji}")
         await interaction.response.send_message(embed=embed, ephemeral=True)
     else:
-        embed=create_small_embed(f"Le salon de télécommande spécifié n'a pas été trouvé {no_emoji}")
+        embed = create_small_embed(f"Le salon de télécommande spécifié n'a pas été trouvé {no_emoji}")
         await interaction.response.send_message(embed=embed, ephemeral=True)
-
-
 
 class RemoteButtonView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
     @discord.ui.button(label="📨 Ouvrir un Ticket", style=discord.ButtonStyle.primary, custom_id="open_ticket")
-    async def open_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-
-
+    async def open_ticket_rc(self, interaction: discord.Interaction, button: discord.ui.Button):
         if CATEGORY_ID is None:
-            embed=create_small_embed(f"La catégorie pour les tickets n'a pas été configurée {no_emoji}")
+            embed = create_small_embed(f"La catégorie pour les tickets n'a pas été configurée {no_emoji}")
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
-        category = interaction.guild.get_channel(CATEGORY_ID)
-        if not category or not isinstance(category, discord.CategoryChannel):
-            embed=create_small_embed(f"La catégorie spécifiée n'existe pas ou n'est pas valide {no_emoji}")
+        category_rc = interaction.guild.get_channel(CATEGORY_ID)
+        if not category_rc or not isinstance(category_rc, discord.CategoryChannel):
+            embed = create_small_embed(f"La catégorie spécifiée n'existe pas ou n'est pas valide {no_emoji}")
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
-        overwrites = {
+        overwrites_rc = {
             interaction.guild.default_role: discord.PermissionOverwrite(read_messages=False),
             interaction.user: discord.PermissionOverwrite(read_messages=True, send_messages=True, read_message_history=True),
             get(interaction.guild.roles, id=STAFF_ROLE_ID): discord.PermissionOverwrite(read_messages=True, send_messages=True, read_message_history=True)
         }
-        ticket_channel = await category.create_text_channel(f"ticket-{interaction.user.name}", overwrites=overwrites)
-        embed=create_small_embed(f"Ticket créé : {ticket_channel.mention} {ticket_emoji}")
+        ticket_channel_rc = await category_rc.create_text_channel(f"ticket-{interaction.user.name}", overwrites=overwrites_rc)
+        embed = create_small_embed(f"Ticket créé : {ticket_channel_rc.mention} {ticket_emoji}")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
         embed = discord.Embed(
             title="Bienvenue dans votre ticket",
-            description="Merci d'avoir ouvert un ticket. Un membre de l'équipe Recrutement sera bientôt avec vous.\n Assurez vous d'avoir remplis le formulaire : (https://docs.google.com/forms/d/e/1FAIpQLSfdSHDbH_MCrVljo1eEqVNkPoAJC0cZtGmcaaqrdxfndJXtBg/viewform)"
+            description="Merci d'avoir ouvert un ticket. Un membre de l'équipe Recrutement sera bientôt avec vous.\n Assurez-vous d'avoir rempli le formulaire : (https://docs.google.com/forms/d/e/1FAIpQLSfdSHDbH_MCrVljo1eEqVNkPoAJC0cZtGmcaaqrdxfndJXtBg/viewform)"
         )
 
+        action_view_rc = TicketActionView(ticket_channel_rc.id, interaction.user.id)
 
-        action_view = TicketActionView(ticket_channel.id, interaction.user.id)
+        log_channel_rc = interaction.guild.get_channel(TICKET_LOG_CHANNEL_ID)
+        if log_channel_rc:
+            embed2 = create_embed(title='Ouvert', description=f"{ticket_channel_rc.mention} créé par {interaction.user.mention}.", color=0xDFC57B)
+            await log_channel_rc.send(embed=embed2)
 
-        log_channel = interaction.guild.get_channel(TICKET_LOG_CHANNEL_ID)
-        if log_channel:
-            embed2=create_embed(title='Ouvert', description=f"{ticket_channel.mention} créé par {interaction.user.mention}.", color=0xDFC57B)
-            await log_channel.send(embed=embed2)
+        await ticket_channel_rc.send(embed=embed, view=action_view_rc)
 
-        await ticket_channel.send(embed=embed, view=action_view)
-
-
+        ticket_data_rc = {
+            "user_id": interaction.user.id,
+            "channel_id": ticket_channel_rc.id
+        }
+        all_tickets_rc = load_ticket_data_rc("ticket_recrutement.json")
+        all_tickets_rc[str(interaction.user.id)] = ticket_data_rc
+        save_ticket_data_rc("ticket_recrutement.json", all_tickets_rc)
 
 class TicketActionView(discord.ui.View):
-    def __init__(self, ticket_channel_id, user_id):
+    def __init__(self, ticket_channel_id_rc, user_id_rc):
         super().__init__(timeout=None)
-        self.ticket_channel_id = ticket_channel_id
-        self.user_id = user_id
+        self.ticket_channel_id_rc = ticket_channel_id_rc
+        self.user_id_rc = user_id_rc
 
     @discord.ui.button(label="Fermer le Ticket", style=discord.ButtonStyle.danger, custom_id="close_ticket")
-    async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        role = get(interaction.guild.roles, id=STAFF_ROLE_ID)
-        if role not in interaction.user.roles:
-            small_embed=create_small_embed(f"Vous n'avez pas les permissions pour fermer ce ticket, veuillez annuler vôtre demande {no_emoji}")
+    async def close_ticket_rc(self, interaction: discord.Interaction, button: discord.ui.Button):
+        role_rc = get(interaction.guild.roles, id=STAFF_ROLE_ID)
+        if role_rc not in interaction.user.roles:
+            small_embed = create_small_embed(f"Vous n'avez pas les permissions pour fermer ce ticket, veuillez annuler votre demande {no_emoji}")
             await interaction.response.send_message(embed=small_embed, ephemeral=True)
             return
 
-        log_channel = interaction.guild.get_channel(1121377434160345118)
-        ticket_channel = interaction.guild.get_channel(self.ticket_channel_id)
-        if ticket_channel:
-            if 1==1:
-                embed_log=create_embed(title="Fermeture", description=f"{ticket_channel.name} fermé par {interaction.user.mention}.", color=0xDFC57B)
-                await log_channel.send(embed=embed_log)
-            await ticket_channel.delete()
-            user=interaction.user
-            embed_mp=create_small_embed(f"Ticket fermé avec succès.{yes_emoji}")
-            await user.send(embed=embed_mp)
-            log_channel = interaction.guild.get_channel(TICKET_LOG_CHANNEL_ID)
+        log_channel_rc = interaction.guild.get_channel(1121377434160345118)
+        ticket_channel_rc = interaction.guild.get_channel(self.ticket_channel_id_rc)
+        if ticket_channel_rc:
+            embed_log_rc = create_embed(title="Fermeture", description=f"{ticket_channel_rc.name} fermé par {interaction.user.mention}.", color=0xDFC57B)
+            await log_channel_rc.send(embed=embed_log_rc)
+            await ticket_channel_rc.delete()
+            user_rc = interaction.user
+            embed_mp_rc = create_small_embed(f"Ticket fermé avec succès.{yes_emoji}")
+            await user_rc.send(embed=embed_mp_rc)
+
+            all_tickets_rc = load_ticket_data_rc("ticket_recrutement.json")
+            if str(self.user_id_rc) in all_tickets_rc:
+                del all_tickets_rc[str(self.user_id_rc)]
+                save_ticket_data_rc("ticket_recrutement.json", all_tickets_rc)
 
     @discord.ui.button(label="Annuler la Demande", style=discord.ButtonStyle.secondary, custom_id="cancel_ticket")
-    async def cancel_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.user_id:
-            embed_stop=create_small_embed(f"Seul l'utilisateur ayant ouvert le ticket peut annuler la demande {no_emoji}")
-            await interaction.response.send_message(embed=embed_stop, ephemeral=True)
+    async def cancel_ticket_rc(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id_rc:
+            embed_stop_rc = create_small_embed(f"Seul l'utilisateur ayant ouvert le ticket peut annuler la demande {no_emoji}")
+            await interaction.response.send_message(embed=embed_stop_rc, ephemeral=True)
             return
 
-        ticket_channel = interaction.guild.get_channel(self.ticket_channel_id)
-        if ticket_channel:
-            await ticket_channel.delete()
-            log_channel = interaction.guild.get_channel(TICKET_LOG_CHANNEL_ID)
-            if log_channel:
-                embed_log2=create_embed(title="Annulation de Ticket", description=f"Ticket {ticket_channel.name} annulé par {interaction.user.mention}.", color=0xDFC57B)
-                user=interaction.user
-                await user.send(embed=embed_log2)
-                await log_channel.send(embed=embed_log2)
+        ticket_channel_rc = interaction.guild.get_channel(self.ticket_channel_id_rc)
+        if ticket_channel_rc:
+            await ticket_channel_rc.delete()
+            log_channel_rc = interaction.guild.get_channel(TICKET_LOG_CHANNEL_ID)
+            if log_channel_rc:
+                embed_log2_rc = create_embed(title="Annulation de Ticket", description=f"Ticket {ticket_channel_rc.name} annulé par {interaction.user.mention}.", color=0xDFC57B)
+                user_rc = interaction.user
+                await user_rc.send(embed=embed_log2_rc)
+                await log_channel_rc.send(embed=embed_log2_rc)
+
+            all_tickets_rc = load_ticket_data_rc("ticket_recrutement.json")
+            if str(self.user_id_rc) in all_tickets_rc:
+                del all_tickets_rc[str(self.user_id_rc)]
+                save_ticket_data_rc("ticket_recrutement.json", all_tickets_rc)
 
 @bot.tree.command()
 @discord.app_commands.checks.has_any_role(staff_role,recruteur)
@@ -954,7 +1108,7 @@ async def kick(interaction, member: discord.Member, reason: str):
     await interaction.response.send_message("✅")
 @bot.tree.command()
 @discord.app_commands.checks.has_role(recruteur)
-async def admis(interaction, member: discord.Member, specialisation: int):
+async def admis(interaction, member: discord.Member, specialisation: str):
     """Accepter quelqu'un dans la faction"""
     guild = interaction.guild
     babysiium = guild.get_role(1031253356234166352)
@@ -963,7 +1117,7 @@ async def admis(interaction, member: discord.Member, specialisation: int):
     pvp = guild.get_role(1185669746570575922)
     mineur = guild.get_role(1185669529368539156)
     faction = guild.get_role(1031253372327698442)
-    if specialisation == 1:
+    if specialisation == "farmeur":
         for rol in member.roles:
             try:
                 await member.remove_roles(rol)
@@ -973,7 +1127,7 @@ async def admis(interaction, member: discord.Member, specialisation: int):
         await member.add_roles(farmeur)
         await member.add_roles(faction)
         spe = "Farmeur"
-    elif specialisation == 2:
+    elif specialisation == "mineur":
         for rol in member.roles:
             try:
                 await member.remove_roles(rol)
@@ -983,7 +1137,7 @@ async def admis(interaction, member: discord.Member, specialisation: int):
         await member.add_roles(mineur)
         await member.add_roles(faction)
         spe = "Mineur"
-    elif specialisation == 3:
+    elif specialisation == "pilleur":
         for rol in member.roles:
             try:
                 await member.remove_roles(rol)
@@ -993,7 +1147,7 @@ async def admis(interaction, member: discord.Member, specialisation: int):
         await member.add_roles(pilleur)
         await member.add_roles(faction)
         spe = "Pilleur"
-    elif specialisation == 4:
+    elif specialisation == "pvp":
         for rol in member.roles:
             try:
                 await member.remove_roles(rol)
@@ -1004,7 +1158,8 @@ async def admis(interaction, member: discord.Member, specialisation: int):
         await member.add_roles(faction)
         spe = "PvP"
     else:
-        await interaction.response.send_message("Erreur lors de la commande", ephemeral=True)
+        embed=create_small_embed(f"Erreur lors de la commande {red_emoji}")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     log_channel = guild.get_channel(1236223187923111946)
     log_message = discord.Embed(title="👋 Join", description=f"La personne {member.display_name} a rejoint la faction avec le rôle {spe}, admis par {interaction.user}", color=0x060270)
@@ -1146,15 +1301,18 @@ async def help(interaction):
                 "**/me** : afficher son propre solde de coins",
                 "**/baltop** : baltop des coins de la faction",
                 "**/buy** : acheter un item avec vos coins",
-                "**/absence** : JJ/MM/AAAA",
-                "**/suggestions** : faire une suggestion"
+                "**/absence** : JJ/MM/AAAA <- Jour/Mois/Année",
+                "**/suggestions** : faire une suggestion",
+                "**/mise** : Visualiser vôtre argent misé à la roulette",
+                "**/parier** : Parier vôtre argent (ne pas executer si aucune roulette en cours -> Voir Salon Economie)",
+                "**/actu_roulette** : Afficher les informations de la roulette en cours"
             ]))
 
         elif staffa == roless:
             embed.add_field(name="⚙️ 𝐒𝐭𝐚𝐟𝐟", value="\n".join([
                 "**/g_coin** : give des coins à un membre",
                 "**/r_coin** : retirer des coins à un membre",
-                "**/coins** : Obtenir le nombre de coins d'un membre",
+                "**/coins** : Obtenir le solde de coins d'un membre",
                 "**/warn** : avertir un membre",
                 "**/ban** : bannir un utilisateur",
                 "**/unban** : unban un utilisateur"
@@ -1197,7 +1355,6 @@ def save_suggestions(suggestions):
 
 
 @bot.tree.command()
-@discord.app_commands.checks.has_role(faction)
 async def suggestions(interaction,*,suggestion: str):
     """Soumettre une suggestion"""
     suggestions_dict = load_suggestions()
@@ -1207,10 +1364,13 @@ async def suggestions(interaction,*,suggestion: str):
     suggestion_channel = bot.get_channel(suggestion_channel_id)
 
     if suggestion_channel:
-        await suggestion_channel.send(f"{interaction.user} a suggéré : {suggestion}")
-        await interaction.response.send_message("Suggestion envoyée avec succès !", ephemeral=True)
+        embed=create_small_embed(f"{interaction.user} a suggéré : {suggestion}")
+        await suggestion_channel.send(embed=embed)
+        embed=create_small_embed(f"Suggestion envoyée avec succès {yes_emoji}!")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
     else:
-        await interaction.response.send_message("Le salon de suggestions n'a pas été trouvé.", ephemeral=True)
+        embed=create_small_embed(f"Le salon de suggestions n'a pas été trouvé.{no_emoji}")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 ####################################### ON MESSAGE + BOT.EVENT #####################################
 
@@ -1346,7 +1506,7 @@ async def on_member_join(member):
     """Envoyer un message de bienvenue aux nouveaux membres."""
     embed = discord.Embed(
         title="Bienvenue sur le Discord de la Elysiium Faction !",
-        description="Je suis le ElysiiumBot développé par Addd78130, le chef de la faction.\n\n"
+        description=f"Je suis le ElysiiumBot développé par Addd78130, le chef de la faction. {boost_emoji}\n\n"
                     "En arrivant sur le discord, je te conseille de prendre conscience du règlement "
                     "et d'accepter ce dernier afin d'obtenir les rôles pour accéder aux différents canaux.\n\n"
                     "Aussi, si tu es ici pour un recrutement, rends-toi dans le salon recrutement et crée un ticket "
@@ -1355,11 +1515,6 @@ async def on_member_join(member):
         color=discord.Color.red()
     )
     await member.send(embed=embed)
-
-@bot.event
-async def on_command_error(interaction, error):
-    if isinstance(error, commands.CommandNotFound):
-        await interaction.response.send_message("Commande non trouvée.")
 
 ############################## SANCTIONS #########################################
 
@@ -1480,8 +1635,8 @@ async def r_ressource(interaction, ressource: str, quantite: int):
             if ressources[ressource] <= 0:
                 del ressources[ressource]
         else:
-            embed = create_small_embed(f"Ressource non trouvée : {ressource}", ephemeral=True)
-            await interaction.response.send_message(embed=embed)
+            embed = create_small_embed(f"Ressource non trouvée : {ressource}")
+            await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
         with open(json_bc_filename, "w") as file:
@@ -1494,7 +1649,7 @@ async def r_ressource(interaction, ressource: str, quantite: int):
 if SERVER:
     run_bot()
 else:
-    bot.run('TOKEN')
+    bot.run(TOTO)
 
 @tasks.loop(seconds=30)
 async def update_status():
