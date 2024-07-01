@@ -65,6 +65,7 @@ stars_emoji = '<a:stars:1242544796623569031>'
 fleche_emoji = '<:Arrow:1242544641367212093>'
 pioche_emoji = '<:miner_icon:1242544602410647644>'
 ailes_emoji = '<a:redwings:1242581740703449169>'
+TOTO = ''
 Addd78130_user_id = 781524251332182016
 chef_role = 1031253346436268162
 json_bc_filename = "ressources_bc.json"
@@ -364,14 +365,14 @@ goal_type_translations = {
     "BREAK_BLOCKS": f"{pioche_emoji}Casser des blocs :",
     "MOB_KILL": f"{mobkill_emoji}Tuer des mob : ",
     "FISHING": f"Pêcher ",
-    "WALK": "Marcher une certaine distance",
-    "ITEM_CRAFT": "Fabriquer des objets",
-    "ITEM_SMELT": "Fondre des objets",
+    "WALK": "Marcher",
+    "ITEM_CRAFT": "Fabriquer",
+    "ITEM_SMELT": "Fondre",
     "ITEM_CRAFT_PALAMACHINE": "Fabriquer avec Palamachine",
-    "ITEM_ENCHANT": "Enchanter des objets",
+    "ITEM_ENCHANT": "Enchanter",
     "GRINDER_CRAFT": "Fabriquer avec un broyeur",
     "GRINDER_SMELT": "Fondre avec un broyeur",
-    "USE_ITEM": "Utiliser des objets"
+    "USE_ITEM": "Utiliser"
 }
 
 server_type_translations = {
@@ -387,7 +388,12 @@ extra_translations = {
     "minecraft:stone/0": "blocs de pierre",
     "minecraft:grass/0": "blocs d'herbe",
     "minecraft:sand/0" : "blocs de sable",
-    "palamod:tile.amethyst.ore/0" : "minerais d'améthyste"
+    "palamod:tile.amethyst.ore/0" : "minerais d'améthyste",
+    "palamod:item.amethyst.sword/0" : "épées en amethyst",
+    "minecraft:dye/0": "colorant",
+    "minecraft:coal/1": "charbon",
+    "palamod:item.potion_launcher/0": " fois le potion launcher",
+    "minecraft:furnace/0": "fours"
 }
 class AvoMarquesButtonView(discord.ui.View):
     def __init__(self):
@@ -753,6 +759,11 @@ class ItemSelector(discord.ui.Select):
         selected_item = self.values[0]
         user_id = str(interaction.user.id)
         coin_balances = load_data("coin_balances.json")
+        all_tickets = load_data("tickets.json")
+
+        if user_id in all_tickets:
+            await interaction.response.send_message("Vous avez déjà un ticket d'achat ouvert. Veuillez le clôturer avant d'en ouvrir un nouveau.", ephemeral=True)
+            return
 
         if selected_item not in items_prices:
             await interaction.response.send_message("L'item sélectionné n'existe pas.", ephemeral=True)
@@ -787,10 +798,9 @@ class ItemSelector(discord.ui.Select):
                     "item": selected_item,
                     "channel_id": ticket_channel.id
                 }
-                all_tickets = load_data("tickets.json")
                 all_tickets[user_id] = ticket_data
                 save_data("tickets.json", all_tickets)
-                staff_role_id=1031253367311310969
+                staff_role_id = 1031253367311310969
 
                 view = TicketBuyActionsView(user_id, item_price, selected_item, staff_role_id)
                 await ticket_channel.send(embed=embed, view=view)
@@ -822,6 +832,11 @@ class CancelButton(discord.ui.Button):
         coin_balances[str(interaction.user.id)] += self.refund_amount
         save_data("coin_balances.json", coin_balances)
 
+        all_tickets = load_data("tickets.json")
+        if self.user_id in all_tickets:
+            del all_tickets[self.user_id]
+            save_data("tickets.json", all_tickets)
+
         await interaction.channel.delete()
         await interaction.user.send(f"Votre demande d'achat pour {self.item} a été annulée et vous avez été remboursé de {self.refund_amount} coins.")
 
@@ -836,6 +851,17 @@ class CloseTicketButton(discord.ui.Button):
             await interaction.response.send_message("Vous n'avez pas la permission d'utiliser ce bouton.", ephemeral=True)
             return
 
+        all_tickets = load_data("tickets.json")
+        user_id = None
+        for uid, data in all_tickets.items():
+            if data["channel_id"] == interaction.channel.id:
+                user_id = uid
+                break
+
+        if user_id:
+            del all_tickets[user_id]
+            save_data("tickets.json", all_tickets)
+
         await interaction.channel.delete()
 
 class TicketBuyActionsView(discord.ui.View):
@@ -844,9 +870,9 @@ class TicketBuyActionsView(discord.ui.View):
         self.add_item(CancelButton(user_id, refund_amount, item))
         self.add_item(CloseTicketButton(staff_role_id))
 
-
 @bot.event
 async def on_ready():
+    update_status()
     print(f'Connecté en tant que {bot.user}!')
     all_tickets = load_data("tickets.json")
     for ticket_data in all_tickets.values():
@@ -859,16 +885,6 @@ async def on_ready():
         if channel:
             view = TicketBuyActionsView(user_id, refund_amount, item, staff_role_id)
             bot.add_view(view, message_id=channel.last_message_id)
-        all_tickets_rc = load_ticket_data_rc("ticket_recrutement.json")
-    for ticket_data_rc in all_tickets_rc.values():
-        user_id_rc = ticket_data_rc["user_id"]
-        channel_id_rc = ticket_data_rc["channel_id"]
-
-        channel_rc = bot.get_channel(channel_id_rc)
-        if channel_rc:
-            view_rc = TicketActionView(channel_id_rc, user_id_rc)
-            bot.add_view(view_rc, message_id=channel_rc.last_message_id)
-
 
 @bot.tree.command()
 async def send_buy(interaction):
@@ -877,7 +893,7 @@ async def send_buy(interaction):
     channel = bot.get_channel(1233099934312562728)
     await channel.send(embed=embed, view=view)
     await interaction.response.send_message("Panneau d'achat envoyé.", ephemeral=True)
-        
+
 ################################### ABSENCES ############################################
 
 @bot.tree.command()
@@ -1651,20 +1667,9 @@ if SERVER:
 else:
     bot.run(TOTO)
 
-@tasks.loop(seconds=30)
 async def update_status():
-    try:
-        if bot.guilds:
-            server = bot.guilds[0]
-            member_count = server.member_count
-            await bot.change_presence(
-                status=discord.Status.dnd,
-                activity=discord.Activity(
-                    type=discord.ActivityType.watching,
-                    name=f"{member_count} membres"
-                )
-            )
-        else:
-            print("Le bot n'est dans aucun serveur.")
-    except Exception as e:
-        print(f"Une erreur est survenue: {e}")
+    for i in range(1000000000000000000000):
+    	server = bot.guilds[0]
+    	member_count = server.member_count
+    	await bot.change_presence(status=discord.Status.dnd, activity=discord.Activity(type=discord.ActivityType.watching, name=f"{member_count} membres"))
+    	asyncio.sleep(3)
