@@ -1,6 +1,7 @@
 import asyncio
 import json
 import typing
+import re
 from discord.utils import get
 import requests
 from math import floor
@@ -11,61 +12,11 @@ from discord.ext import tasks
 import discord
 import traceback
 from discord.ui import View
+from datetime import datetime, timezone, timedelta
 from discord.ext import commands
 from collections import defaultdict
-from datetime import datetime, timedelta
-fleche_rose_emoji = '<a:flecheRose:1242544763656208475>'
-boost_emoji = '<:LegendBoost:1243672429726011505>'
-ticket_emoji = '<:Ticket:1242794933539180606>'
-alarme_emoji = '<a:red:1242544438706700390>'
-feublanc_emoji = '<a:whitefire:1242810223589195913>'
-breakblocs_emoji = '<:break:1243679212347457546>'
-mobkill_emoji = '<:mob_kill:1243678815184752651>'
-serveur_emoji = '<:servers:1243827983303839774>'
-online_emoji = '<a:Online:1242550716891926663>'
-offline_emoji = '<a:Offline:1242550693579984926>'
-poisson_emoji = '<a:Fishhh:1243281919702204526>'
-run_emoji = '<a:SonicR:1243282564735696916>'
-cochon_emoji = '<:mc_pig:1243281791620485131>'
-mouton_emoji = '<:mc_sheep:1243282027072061481>'
-vache_emoji = '<:mc_cow:1243282103144022048>'
-debut_emoji = '<:start:1242816886266138656>'
-ban_emoji = '<a:Banned:1242580102982795374>'
-red_emoji = '<a:red:1242544438706700390>'
-sword_emoji = '<:swordss:1242544918648590356>'
-imbali_emoji = '<:Imbali:1242550806775861280>'
-keltis_emoji = '<:Keltis:1242550789411442799>'
-luccento_emoji = '<:Luccento:1242550824731676818>'
-manashino_emoji = '<:Manashino:1242550852221145098>'
-muzdan_emoji = '<:Muzdan:1242550925768261662>'
-untaa_emoji = '<:Untaa:1242550891895062558>'
-neolith_emoji = '<:Neolith:1242550939102220381>'
-quantitee_emoji = '<a:krown:1242583010201567232>'
-quete_emoji = '<:loupeblanc:1242582580407177358>'
-objectif_emoji = '<:VCT_Master:1242584210309382227>'
-recompense_emoji = '<a:redfire:1242581711548846100>'
-objet_emoji = '<:objet:1242580714583625860>'
-XP_emoji = '<:xp:1242575989230276710> '
-redaction_emoji = '<:IconRedaction:1242575622815875143>'
-niveau_emoji = '<:level:1242576169900183763>'
-no_emoji = '<a:no:1242544552297103360>'
-yes_emoji = '<a:yes:1242544533854752830>'
-moderator_emoji = '<:moderator:1242544860389576744>'
-pala_emoji = '<:IconPala:1242544681812885545>'
-faction_emoji = '<:swordss:1242544918648590356>'
-crown_emoji = '<a:whitecrown:1242544417882243164>'
-alchi_emoji = '<:Alchi:1242530477508657244>'
-farmer_emoji = '<:Farmer:1242530465198505994>'
-hunter_emoji = '<:Hunter:1242530429269966891>'
-miner_emoji = '<:Miner:1242530449180590091>'
-argent_emoji = '<:Money:1242543461782126593>'
-dollar_emoji = '<:Dollar:1242554119697469603>'
-heure_emoji = '<a:Time:1242546035318984714>'
-stars_emoji = '<a:stars:1242544796623569031>'
-fleche_emoji = '<:Arrow:1242544641367212093>'
-pioche_emoji = '<:miner_icon:1242544602410647644>'
-ailes_emoji = '<a:redwings:1242581740703449169>'
-TOTO = ''
+import time
+TOTO = 'TOKEN'
 Addd78130_user_id = 781524251332182016
 chef_role = 1031253346436268162
 json_bc_filename = "ressources_bc.json"
@@ -74,14 +25,14 @@ faction = 1031253372327698442
 allowed_channels = [1125525733595414610, 1031253440992645230, 1031253459057528912]
 LOG_CHANNEL_ID = 1141292096632918067
 allowed_role_id = 1031253346436268162
-coin_emoji = '<:coins:1242544888936136839>'
 recup = 1212132568539996211
 bad_words_json_path = 'bad_words.json'
 ignored_users_json_path = 'ignored_users.json'
 mute_role_id = 1098721696573300806
 staff_role = 1031253367311310969
-
-
+alert_delay = 3600
+last_interaction_time = time.time()
+alert_task = None
 ########################################## START #########################################
 
 debug = True
@@ -90,12 +41,28 @@ intents = discord.Intents().all()
 
 class PersistentViewBot(commands.Bot):
     def __init__(self):
-        super().__init__(command_prefix=commands.when_mentioned_or('CAS'), help_command=None, case_insensitive=True, intents=discord.Intents().all(), timeout=None)
-    
+        super().__init__(command_prefix=commands.when_mentioned_or('!'), help_command=None, case_insensitive=True, intents=intents)
+
     async def setup_hook(self) -> None:
-        views = [RouletteView(), RemoteButtonView(), AvoMarquesButtonView(), ItemSelectorView()]
+        views = [RouletteView(), RemoteButtonView(), AvoMarquesButtonView(), ItemSelectorView(), PanelCheckBC()]
         for element in views:
             self.add_view(element)
+     
+        data = load_giveaway_data()
+        for prize, giveaway_info in data.items():
+            if isinstance(giveaway_info, dict):
+                end_time = datetime.fromisoformat(giveaway_info['end_time'])
+                if end_time > datetime.utcnow():
+                    view = GiveawayButton(prize)
+                    self.add_view(view)
+                    asyncio.create_task(resume_giveaway(
+                        giveaway_info['channel_id'],
+                        giveaway_info['message_id'], 
+                        end_time, 
+                        prize
+                    ))
+
+
         
 bot = PersistentViewBot()
 
@@ -121,6 +88,197 @@ def load_coin_balances():
         return coin_balances
     except FileNotFoundError:
         return None
+    
+    
+###################### ARKANE ################################
+@bot.tree.command(name='listemojis')
+async def list_emojis(interaction: discord.Interaction):
+    emojis = interaction.guild.emojis
+    if not emojis:
+        await interaction.response.send_message("Il n'y a pas d'emojis sur ce serveur.")
+        return
+
+    emoji_dict = {emoji.name: f"<{'a' if emoji.animated else ''}:{emoji.name}:{emoji.id}>" for emoji in emojis}
+    
+    with open('emojis.json', 'w') as f:
+        json.dump(emoji_dict, f, indent=4)
+
+    formatted_emoji_list = '\n'.join([f"{name}: {value}" for name, value in emoji_dict.items()])
+
+    max_message_length = 2000
+    for i in range(0, len(formatted_emoji_list), max_message_length):
+        await interaction.response.send_message(formatted_emoji_list[i:i + max_message_length])
+
+    await interaction.response.send_message("Le fichier JSON a été créé.")
+
+info_member_path = 'infos_membres.json'
+message_store_path = 'messages.json'
+
+@bot.tree.command(name="member", description="Affiche les informations d'un membre")
+async def member(interaction: discord.Interaction, pseudo: str):
+    infos_membres = await load_member_data()
+    
+    if pseudo in infos_membres:
+        member_info = infos_membres[pseudo]
+        embed = discord.Embed(
+            title=f"Informations pour {pseudo}",
+            color=discord.Color.blue()
+        )
+        embed.add_field(name="Nombre de Boss tués", value=member_info.get("boss_kills", "N/A"), inline=False)
+        embed.add_field(name="Nombre de check BC fait", value=member_info.get("check_bc", "N/A"), inline=False)
+        embed.add_field(name="Nombre de A vos marques faits", value=member_info.get("a_vos_marques", "N/A"), inline=False)
+        await interaction.response.send_message(embed=embed)
+    else:
+        await interaction.response.send_message(f"Membre {pseudo} non trouvé.", ephemeral=True)
+async def load_alert_state():
+    try:
+        with open('alert_state.json', 'r') as f:
+            state = json.load(f)
+            return state
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {
+            'last_interaction_time': time.time(),
+            'reminder_message_ids': []
+        }
+
+async def save_alert_state(state):
+    with open('alert_state.json', 'w') as f:
+        json.dump(state, f, indent=4)
+async def load_member_data():
+    try:
+        with open(info_member_path, 'r') as f:
+            data = json.load(f)
+            return data
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+async def save_member_data(data):
+    with open(info_member_path, 'w') as f:
+        json.dump(data, f, indent=4)
+
+async def load_message_data():
+    try:
+        with open(message_store_path, 'r') as f:
+            data = json.load(f)
+            if 'embed_messages' not in data:
+                data['embed_messages'] = []
+            return data
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {'embed_messages': []}
+
+async def save_message_data(data):
+    with open(message_store_path, 'w') as f:
+        json.dump(data, f, indent=4)
+
+class PanelCheckBC(View):
+    def __init__(self):
+        super().__init__(timeout=None)  # Timeout à None pour rendre la vue persistante
+    @discord.ui.button(label='✅RAS', style=discord.ButtonStyle.green, custom_id='button_ras')
+    async def button_ras(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await handle_button_click(interaction, "RAS")
+
+    @discord.ui.button(label='🔴Alerte 1', style=discord.ButtonStyle.red, custom_id='button_alert1')
+    async def button_alert1(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await handle_button_click(interaction, "Alerte 1")
+
+    @discord.ui.button(label='🔴Alerte 2', style=discord.ButtonStyle.red, custom_id='button_alert2')
+    async def button_alert2(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await handle_button_click(interaction, "Alerte 2")
+
+async def handle_button_click(interaction, alert_type):
+    global last_interaction_time, alert_task
+    embed = discord.Embed(title=f"Notification: {alert_type}", description=f"Vous avez cliqué sur {alert_type}")
+    
+    await interaction.response.defer()
+    message = await interaction.followup.send(embed=embed)
+    
+    message_data = await load_message_data()
+    message_data['embed_messages'].append(message.id)
+    if len(message_data['embed_messages']) > 2:
+        old_message_id = message_data['embed_messages'].pop(0)
+        try:
+            old_message = await interaction.channel.fetch_message(old_message_id)
+            await old_message.delete()
+        except discord.NotFound:
+            pass
+
+    await save_message_data(message_data)
+    
+    last_interaction_time = time.time()
+    
+    state = await load_alert_state()
+    
+    for msg_id in state['reminder_message_ids']:
+        try:
+            reminder_message = await interaction.channel.fetch_message(msg_id)
+            await reminder_message.delete()
+        except discord.NotFound:
+            pass
+    
+    state['reminder_message_ids'] = []
+    state['last_interaction_time'] = last_interaction_time
+    await save_alert_state(state)
+    
+    if alert_task is not None and not alert_task.done():
+        alert_task.cancel()
+    alert_task = bot.loop.create_task(send_alert_if_needed(interaction.channel))
+
+
+
+@bot.tree.command(name="send_bc_panel")
+async def send_bc_panel(interaction: discord.Interaction):
+    global alert_task, last_interaction_time
+    embed = discord.Embed(title="Check Panel", description="Sélectionnez une option:")
+    view = PanelCheckBC()
+    await interaction.response.send_message(embed=embed, view=view)
+    
+    if alert_task is None or alert_task.done():
+        last_interaction_time = time.time()
+        state = {
+            'last_interaction_time': last_interaction_time,
+            'reminder_message_ids': []
+        }
+        await save_alert_state(state)
+        alert_task = bot.loop.create_task(send_alert_if_needed(interaction.channel))
+
+
+async def send_alert_if_needed(channel):
+    global last_interaction_time, alert_task
+    state = await load_alert_state()
+    last_interaction_time = state['last_interaction_time']
+
+    while True:
+        await asyncio.sleep(alert_delay)
+        if time.time() - last_interaction_time >= alert_delay:
+            reminder_message = await channel.send(content="@everyone Un check BC est nécessaire. Veuillez vérifier et réagir en conséquence.")
+            state['reminder_message_ids'].append(reminder_message.id)
+            await save_alert_state(state)
+            last_interaction_time = time.time()
+
+
+    member_pseudo = interaction.user.name 
+    member_data = await load_member_data()
+    if member_pseudo not in member_data:
+        member_data[member_pseudo] = {"boss_kills": 0, "check_bc": 0, "a_vos_marques": 0}
+
+    if alert_type == "RAS":
+        member_data[member_pseudo]["check_bc"] += 1
+    elif alert_type == "Alerte 1":
+        member_data[member_pseudo]["check_bc"] += 1
+    elif alert_type == "Alerte 2":
+        member_data[member_pseudo]["check_bc"] += 1
+
+    await save_member_data(member_data)
+
+@bot.tree.command()
+async def reset(interaction: discord.Interaction, member: str):
+    member_data = await load_member_data()
+    if member in member_data:
+        del member_data[member]
+        await save_member_data(member_data)
+        await interaction.response.send_message(f"Les statistiques de {member} ont été réinitialisées.", ephemeral=True)
+    else:
+        await interaction.response.send_message(f"Membre {member} non trouvé.", ephemeral=True)
 
 ############################### ROULETTE ########################################
 
@@ -137,7 +295,7 @@ def sauvegarder_paris(data):
 async def parier(interaction, montant: int):
     """Parier une somme pour la Roulette"""
     if montant <= 0:
-        embed = create_small_embed(f"Le montant du pari doit être supérieur à 0 {dollar_emoji}")
+        embed = create_small_embed(f"Le montant du pari doit être supérieur à 0 {get_emoji('dollar_emoji')}")
         await interaction.response.send_message(embed=embed, ephemeral=True)
         return
 
@@ -151,7 +309,7 @@ async def parier(interaction, montant: int):
 
     data["total_pot"] += montant
     sauvegarder_paris(data)
-    embed=create_small_embed(f"Vous avez parié : {montant} {dollar_emoji}")
+    embed=create_small_embed(f"Vous avez parié : {montant} {get_emoji('dollar_emoji')}")
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -160,7 +318,7 @@ async def parier(interaction, montant: int):
 async def roulette(interaction):
     """Créer la roulette"""
     view = RouletteView()
-    embed = create_embed(title="Roulette 🎰", description=f"{boost_emoji} Appuyez sur le bouton pour démarrer la roulette ")
+    embed = create_embed(title="Roulette 🎰", description=f"{get_emoji('boost_emoji')} Appuyez sur le bouton pour démarrer la roulette ")
     await interaction.response.send_message(embed=embed, view=view)
     
 @bot.tree.command(name="actu_roulette")
@@ -168,13 +326,13 @@ async def roulette(interaction):
 async def actu_roulette(interaction: discord.Interaction):
     """Etat de la Roulette"""
     if not interaction.guild:
-        embed = create_small_embed(f"Cette commande ne peut être utilisée que dans un serveur {moderator_emoji}")
+        embed = create_small_embed(f"Cette commande ne peut être utilisée que dans un serveur {get_emoji('moderator_emoji')}")
         await interaction.response.send_message(embed=embed, ephemeral=True)
         return
     
     data = charger_paris()
     if not data["bets"]:
-        embed = create_small_embed(f"Aucun pari n'a été placé. {no_emoji}")
+        embed = create_small_embed(f"Aucun pari n'a été placé. {get_emoji('no_emoji')}")
         await interaction.response.send_message(embed=embed, ephemeral=True)
         return
 
@@ -184,7 +342,7 @@ async def actu_roulette(interaction: discord.Interaction):
         if user:
             embed.add_field(name=user.display_name, value=f"{montant}💲", inline=False)
 
-    embed.add_field(name="Cagnotte Totale", value=f"{data['total_pot']} {dollar_emoji}", inline=False)
+    embed.add_field(name="Cagnotte Totale", value=f"{data['total_pot']} {get_emoji('dollar_emoji')}", inline=False)
 
     await interaction.response.send_message(embed=embed)
 
@@ -197,10 +355,10 @@ async def mise(interaction):
     user_id = str(interaction.user.id)
     if user_id in data["bets"]:
         montant = data["bets"][user_id]
-        embed = create_small_embed(f"Vous avez parié : `{montant}` {dollar_emoji}.")
+        embed = create_small_embed(f"Vous avez parié : `{montant}` {get_emoji('dollar_emoji')}.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
     else:
-        embed=create_small_embed(f"Vous n'avez pas encore parié. {no_emoji}")
+        embed=create_small_embed(f"Vous n'avez pas encore parié. {get_emoji('no_emoji')}")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 class RouletteView(discord.ui.View):
@@ -211,13 +369,13 @@ class RouletteView(discord.ui.View):
         guild=interaction.guild
         role = guild.get_role(1031253367311310969)
         if role not in interaction.user.roles:
-            embed=create_small_embed(f"Vous n'avez pas les permissions pour démarrer la roulette. {no_emoji}")
+            embed=create_small_embed(f"Vous n'avez pas les permissions pour démarrer la roulette. {get_emoji('no_emoji')}")
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
         data = charger_paris()
         if not data["bets"]:
-            embed = create_small_embed(f"Aucun pari n'a été placé. {no_emoji}")
+            embed = create_small_embed(f"Aucun pari n'a été placé. {get_emoji('no_emoji')}")
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
@@ -230,7 +388,7 @@ class RouletteView(discord.ui.View):
         participant_list = ', '.join(participant_mentions)
 
         embed = discord.Embed(title="Elysiium ROULETTE", color=0x00ff00)
-        embed.add_field(name="Gagnant", value=f"<@{winner_id}> gagne {winner_amount} {dollar_emoji}!", inline=False)
+        embed.add_field(name="Gagnant", value=f"<@{winner_id}> gagne {winner_amount} {get_emoji('dollar_emoji')}!", inline=False)
         embed.add_field(name="Cagnotte Totale {dollar_emoji}", value=f"{data['total_pot']}", inline=False)
         embed.add_field(name="Participants", value=participant_list, inline=False)
 
@@ -240,8 +398,72 @@ class RouletteView(discord.ui.View):
         data["total_pot"] = 0
         sauvegarder_paris(data)
 ############################### API PALADIUM ########################################
+def get_emoji(name):
+    return emojis.get(name, '')
 
-serveurs_paladium = [f"Soleratl", "Muzdan", "Manashino", "Luccento", "Imbali", "Keltis", "Neolith", "Untaa"]
+@bot.tree.command()
+async def agenda(interaction: discord.Interaction):
+    """Affiche les événements à venir aujourd'hui."""
+    url = "https://api.paladium.games/v1/paladium/events/upcoming"
+
+    response = requests.get(url)
+    
+    if response.status_code == 200:
+        data = response.json()
+        events = data.get('data', [])
+        
+        # Get today's date in local timezone
+        today_local = datetime.now().astimezone().date()
+        print(f"Aujourd'hui (local) : {today_local}")
+
+        events_today = []
+        for event in events:
+            event_start_utc = datetime.fromtimestamp(event['start'] / 1000, tz=timezone.utc)
+            event_start_local = event_start_utc.astimezone()
+            event_start_local_date = event_start_local.date()
+            print(f"Événement : {event['name']} commence le {event_start_local_date} à {event_start_local.time()}")
+
+            # Check if the event's local date is today
+            if event_start_local_date == today_local:
+                events_today.append(event)
+
+        if not events_today:
+            await interaction.response.send_message("Aucun événement prévu pour aujourd'hui.")
+            return
+
+        embed = discord.Embed(title="Événements d'aujourd'hui", color=0x00ff00)
+        for event in events_today:
+            name = event['name']
+            servers = ', '.join(event['servers'])
+            start_time = datetime.fromtimestamp(event['start'] / 1000).astimezone().strftime('%Y-%m-%d %H:%M:%S')
+            end_time = datetime.fromtimestamp(event['end'] / 1000).astimezone().strftime('%Y-%m-%d %H:%M:%S')
+
+            embed.add_field(name="Nom", value=name, inline=False)
+            embed.add_field(name="Serveurs", value=servers, inline=False)
+            embed.add_field(name="Début", value=start_time, inline=False)
+            embed.add_field(name="Fin", value=end_time, inline=False)
+
+        await interaction.response.send_message(embed=embed)
+    else:
+        await interaction.response.send_message("Impossible de récupérer les événements pour le moment. Veuillez réessayer plus tard.")
+        
+serveurs_paladium = ["Soleratl", "Muzdan", "Manashino", "Luccento", "Imbali", "Keltis", "Neolith", "Untaa"]
+
+def get_emoji_palaserv(emoji_name):
+    emoji_dict = {
+        "online_emoji": '<a:Online:1242550716891926663>',
+        "offline_emoji": '<a:Offline:1242550693579984926>',
+        "no_emoji": '<a:no:1242544552297103360>',
+        "soleratl_emoji": '<a:whitecrown:1242544417882243164>',
+        "muzdan_emoji": '<:Muzdan:1242550925768261662>',
+        "manashino_emoji": '<:Manashino:1242550852221145098>',
+        "luccento_emoji": '<:Luccento:1242550824731676818>',
+        "imbali_emoji": '<:Imbali:1242550806775861280>',
+        "keltis_emoji": '<:Keltis:1242550789411442799>',
+        "neolith_emoji": '<:Neolith:1242550939102220381>',
+        "untaa_emoji": '<:Untaa:1242550891895062558>'
+    }
+    return emoji_dict.get(emoji_name, '')
 
 @bot.tree.command()
 async def pala_status(interaction, server: str):
@@ -256,12 +478,12 @@ async def pala_status(interaction, server: str):
             status = data['java']['factions'].get(server_name, "offline")
             server_emoji = f"{server_name.lower()}_emoji"
             if status == "running":
-                embed = discord.Embed(title=f"Statut du serveur {server_name} {globals()[server_emoji]}", description=f"Le serveur {server_name} est en ligne {online_emoji} !", color=0xE7DDFF)
+                embed = discord.Embed(title=f"Statut du serveur {server_name} {get_emoji_palaserv(server_emoji)}", description=f"Le serveur {server_name} est en ligne {get_emoji('online_emoji')} !", color=0xE7DDFF)
             else:
-                embed = discord.Embed(title=f"Statut du serveur {server_name} {globals()[server_emoji]}", description=f"Le serveur {server_name} n'est pas en ligne {offline_emoji}.", color=0xE7DDFF)
+                embed = discord.Embed(title=f"Statut du serveur {server_name} {get_emoji_palaserv(server_emoji)}", description=f"Le serveur {server_name} n'est pas en ligne {get_emoji('offline_emoji')}.", color=0xE7DDFF)
             await interaction.response.send_message(embed=embed, ephemeral=True)
         else:
-            embed = discord.Embed(title="Erreur", description=f"Impossible de récupérer les informations sur l'état du serveur {no_emoji}.", color=0xE7DDFF)
+            embed = discord.Embed(title="Erreur", description=f"Impossible de récupérer les informations sur l'état du serveur {server_name} {get_emoji_palaserv(server_emoji)} {get_emoji('no_emoji')}.", color=0xE7DDFF)
             await interaction.response.send_message(embed=embed, ephemeral=True)
     else:
         embed = discord.Embed(title="Erreur", description=f"Le serveur {server_name} n'existe pas, les serveurs valides sont : {', '.join(serveurs_paladium)}.", color=0xE7DDFF)
@@ -276,30 +498,30 @@ async def player_profil(interaction, username: str):
     
     if response.status_code == 200:
         data = response.json()
-        embed = discord.Embed(title=f"{pala_emoji} Profil de {data['username']}", color=0xFFD700) 
-        embed.add_field(name=f"{faction_emoji} Faction", value=data["faction"], inline=True)
+        embed = discord.Embed(title=f"{get_emoji('pala_emoji')} Profil de {data['username']}", color=0xFFD700) 
+        embed.add_field(name=f"{get_emoji('faction_emoji')} Faction", value=data["faction"], inline=True)
         embed.add_field(name="", value="", inline=True)
         embed.add_field(name="", value="", inline=True)
-        embed.add_field(name=f"{alchi_emoji} Alchimiste", value=" "*10 + str(data["jobs"]["alchemist"]["level"]), inline=True)
+        embed.add_field(name=f"{get_emoji('alchi_emoji')} Alchimiste", value=" "*10 + str(data["jobs"]["alchemist"]["level"]), inline=True)
         embed.add_field(name="", value="      ", inline=True)
-        embed.add_field(name=f"{farmer_emoji} Fermier", value=" "*10 + str(data["jobs"]["farmer"]["level"]), inline=True)
+        embed.add_field(name=f"{get_emoji('farmer_emoji')} Fermier", value=" "*10 + str(data["jobs"]["farmer"]["level"]), inline=True)
         embed.add_field(name="", value="", inline=False)
-        embed.add_field(name=f"{hunter_emoji} Chasseur", value=str(data["jobs"]["hunter"]["level"]), inline=True)
+        embed.add_field(name=f"{get_emoji('hunter_emoji')} Chasseur", value=str(data["jobs"]["hunter"]["level"]), inline=True)
         embed.add_field(name="", value="      ", inline=True)
-        embed.add_field(name=f"{miner_emoji} Mineur", value=" "*10 + str(data["jobs"]["miner"]["level"]), inline=True)
-        embed.add_field(name=f"{argent_emoji} Argent", value=str(data["money"]) + "  $", inline=False)
-        embed.add_field(name=f"{heure_emoji} Temps de jeu (en Heures)", value=data["timePlayed"]/60, inline=False)
+        embed.add_field(name=f"{get_emoji('miner_emoji')} Mineur", value=" "*10 + str(data["jobs"]["miner"]["level"]), inline=True)
+        embed.add_field(name=f"{get_emoji('argent_emoji')} Argent", value=str(data["money"]) + "  $", inline=False)
+        embed.add_field(name=f"{get_emoji('heure_emoji')} Temps de jeu (en Heures)", value=data["timePlayed"]/60, inline=False)
         embed.add_field(name="", value="", inline=True)
-        embed.add_field(name=f"{stars_emoji} Rang", value=data["rank"], inline=False)
+        embed.add_field(name=f"{get_emoji('star_emosji')} Rang", value=data["rank"], inline=False)
         
         await interaction.response.send_message(embed=embed)
     else:
-        embed = discord.Embed(title="Erreur", description=f"Impossible de récupérer le profil du joueur, as-tu bien mis le bon pseudo ou les serveur de L'API sont-ils down ? {moderator_emoji}", color=0xFF0000)
+        embed = discord.Embed(title="Erreur", description=f"Impossible de récupérer le profil du joueur, as-tu bien mis le bon pseudo ou les serveur de L'API sont-ils down ? {get_emoji('moderator_emoji')}", color=0xFF0000)
 
         await interaction.response.send_message(embed=embed)
 
 @bot.tree.command()
-async def faction_profil(interaction, name: str):
+async def faction_profil(interaction: discord.Interaction, name: str):
     """Profil d'une faction paladium"""
     api_url = f"https://api.paladium.games/v1/paladium/faction/profile/{name}"
     response = requests.get(api_url)
@@ -310,24 +532,47 @@ async def faction_profil(interaction, name: str):
         emblem = data["emblem"]
         emblem_url = f"https://picture.paladium.games/emblem/{emblem['backgroundId']}/{emblem['foregroundColor']}/{emblem['iconId']}.png"
         
-        embed = discord.Embed(title=f"{sword_emoji} Profil de la Faction {data['name']}", color=0xFFD700)
+        embed = discord.Embed(
+            title=f"{get_emoji('sword_emoji')} Profil de la Faction {data['name']}",
+            color=0xFFD700
+        )
         
-        embed.add_field(name=f"{niveau_emoji} Niveau de la Faction", value=data["level"]["level"], inline=True)
-        embed.add_field(name=f"{XP_emoji} XP de la Faction", value=data["level"]["xp"], inline=True)
+        embed.add_field(
+            name=f"{get_emoji('niveau_emoji')} Niveau de la Faction",
+            value=data["level"]["level"],
+            inline=True
+        )
+        embed.add_field(
+            name=f"{get_emoji('XP_emoji')} XP de la Faction",
+            value=data["level"]["xp"],
+            inline=True
+        )
         
         created_at = datetime.fromtimestamp(data["createdAt"] / 1000)
-        embed.add_field(name="Date de création", value=created_at.strftime("%d / %m / %Y"), inline=False)
+        embed.add_field(
+            name="Date de création",
+            value=created_at.strftime("%d / %m / %Y"),
+            inline=False
+        )
         
         embed.set_footer(text=f"UUID de la Faction: `{data['uuid']}`")
         
         players_info = "\n".join([f"{player['group']} - {player['username']}" for player in data["players"]])
-        embed.add_field(name="Joueurs", value=players_info, inline=False)
+        embed.add_field(
+            name="Joueurs",
+            value=players_info,
+            inline=False
+        )
         
         embed.set_image(url=emblem_url)
         
         await interaction.response.send_message(embed=embed)
     else:
-        embed = discord.Embed(title="Erreur", description="Impossible de récupérer les détails du profil de la faction.", color=0xFF0000)
+        embed = discord.Embed(
+            title="Erreur",
+            description="Impossible de récupérer les détails du profil de la faction.",
+            color=0xFF0000
+        )
         await interaction.response.send_message(embed=embed)
 
         
@@ -342,11 +587,11 @@ async def qdf(interaction):
         
         embed = discord.Embed(title="Quête de Faction", color=0xFFD700)
         
-        embed.add_field(name=f"{objet_emoji} Objet", value=data["item"], inline=True)
-        embed.add_field(name=f"{quantitee_emoji} Quantité", value=data["quantity"], inline=True)
+        embed.add_field(name=f"{get_emoji('objet_emoji')} Objet", value=data["item"], inline=True)
+        embed.add_field(name=f"{get_emoji('quantitee_emoji')} Quantité", value=data["quantity"], inline=True)
         embed.add_field(name="", value="", inline=True)
-        embed.add_field(name=f"{XP_emoji} XP Gagnée", value=data["earningXp"], inline=True)
-        embed.add_field(name=f"{argent_emoji} Argent Gagné", value=data["earningMoney"], inline=True)
+        embed.add_field(name=f"{get_emoji('XP_emoji')} XP Gagnée", value=data["earningXp"], inline=True)
+        embed.add_field(name=f"{get_emoji('argent_emoji')} Argent Gagné", value=data["earningMoney"], inline=True)
         
         await interaction.response.send_message(embed=embed)
     else:
@@ -357,17 +602,26 @@ async def qdf(interaction):
 @discord.app_commands.checks.has_role(staff_role)
 async def send_avosmarques(interaction: discord.Interaction):
     """Prochain A Vos Marques"""
-    embed = discord.Embed(title=f"{ailes_emoji} Événement A Vos Marques", description=f"{fleche_rose_emoji} Cliquez sur le bouton ci-dessous pour voir les détails du prochain événement 'A Vos Marques'", color=0x2F2A9E)
+    embed = discord.Embed(title=f"{get_emoji('ailes_emoji')}   Événement A Vos Marques", description=f"{get_emoji('fleche_rose_emoji')} Cliquez sur le bouton ci-dessous pour voir les détails du prochain A Vos Marques", color=0x2F2A9E)
     view = AvoMarquesButtonView()
     await interaction.response.send_message(embed=embed, view=view)
 
+def load_emojis(filename='emojis.json'):
+    with open(filename, 'r') as file:
+        return json.load(file)
+
+emojis = load_emojis()
+
+def get_emoji(name):
+    return emojis.get(name, '')
+
 goal_type_translations = {
-    "BREAK_BLOCKS": f"{pioche_emoji}Casser des blocs :",
-    "MOB_KILL": f"{mobkill_emoji}Tuer des mob : ",
+    "BREAK_BLOCKS": f"{get_emoji('pioche_emoji')}Casser des blocs :",
+    "MOB_KILL": f"{get_emoji('mobkill_emoji')}Tuer des mob : ",
     "FISHING": f"Pêcher ",
     "WALK": "Marcher",
     "ITEM_CRAFT": "Fabriquer",
-    "ITEM_SMELT": "Fondre",
+    "ITEM_SMELT": "Fondre/Cuire",
     "ITEM_CRAFT_PALAMACHINE": "Fabriquer avec Palamachine",
     "ITEM_ENCHANT": "Enchanter",
     "GRINDER_CRAFT": "Fabriquer avec un broyeur",
@@ -376,15 +630,17 @@ goal_type_translations = {
 }
 
 server_type_translations = {
-    "MINAGE": f"{pioche_emoji}Minage",
-    "FARMLAND": f"{fleche_emoji}Farmland"
+    "MINAGE": f"{get_emoji('pioche_emoji')}Minage",
+    "FARMLAND": f"{get_emoji('fleche_emoji')}Farmland"
 }
 
 extra_translations = {
-    "sheep": f"moutons {mouton_emoji}",
-    "pig": f"cochons {cochon_emoji}",
-    "": f"poissons {poisson_emoji}",
-    "cow": f"vache {vache_emoji}",
+    "minecraft:apple/0": "pommes",
+    "minecraft:iron_ingot/0": f"Minerais de fer {get_emoji('iron_emoji')}",
+    "sheep": f"moutons {get_emoji('mouton_emoji')}",
+    "pig": f"cochons {get_emoji('cochon_emoji')}",
+    "": f"poissons {get_emoji('poisson_emoji')}",
+    "cow": f"vache {get_emoji('vache_emoji')}",
     "minecraft:stone/0": "blocs de pierre",
     "minecraft:grass/0": "blocs d'herbe",
     "minecraft:sand/0" : "blocs de sable",
@@ -393,8 +649,11 @@ extra_translations = {
     "minecraft:dye/0": "colorant",
     "minecraft:coal/1": "charbon",
     "palamod:item.potion_launcher/0": " fois le potion launcher",
-    "minecraft:furnace/0": "fours"
+    "minecraft:furnace/0": "fours",
+    "palamod:item.titane.pickaxe/0":'pioche en titane',
+    "minecraft:cooked_beef/0": f"steak de boeuf {get_emoji('vache_emoji')}"
 }
+
 class AvoMarquesButtonView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -423,12 +682,12 @@ class AvoMarquesButtonView(discord.ui.View):
             
             quest = f"{goal_type_french} {amount} {extra_french}"
             
-            embed = discord.Embed(title=f"{ailes_emoji} Événement A Vos Marques", color=0x2F2A9E)
-            embed.add_field(name=f"{quete_emoji} Quête", value=str(quest), inline=True)
+            embed = discord.Embed(title=f"{get_emoji('ailes_emoji')} Événement A Vos Marques", color=0x2F2A9E)
+            embed.add_field(name=f"{get_emoji('quete_emoji')} Quête", value=str(quest), inline=True)
             embed.add_field(name="", value="", inline=True)
-            embed.add_field(name=f"{serveur_emoji} Serveur", value=server_type_french, inline=True)
+            embed.add_field(name=f"{get_emoji('serveur_emoji')} Serveur", value=server_type_french, inline=True)
             embed.add_field(name="", value="", inline=True)
-            embed.add_field(name="", value=f"{debut_emoji} **Début**: `{start_time.strftime('%d / %m / %Y à %H h %M')}`", inline=False)
+            embed.add_field(name="", value=f"{get_emoji('debut_emoji')} **Début**: `{start_time.strftime('%d / %m / %Y à %H h %M')}`", inline=False)
             
             await interaction.response.send_message(embed=embed, ephemeral=True)
         else:
@@ -461,13 +720,13 @@ async def avosmarques(interaction):
         
         quest = f"{goal_type_french} {amount} {extra_french}"
         
-        embed = discord.Embed(title=f"{ailes_emoji} Événement A Vos Marques", color=0x2F2A9E)
+        embed = discord.Embed(title=f"{get_emoji('ailes_emoji')} Événement A Vos Marques", color=0x2F2A9E)
 
-        embed.add_field(name=f"{quete_emoji} Quête", value=str(quest), inline=True)
+        embed.add_field(name=f"{get_emoji('quete_emoji')} Quête", value=str(quest), inline=True)
         embed.add_field(name="", value="", inline=True)
-        embed.add_field(name=f"{serveur_emoji} Serveur", value=server_type_french, inline=True)
+        embed.add_field(name=f"{get_emoji('serveur_emoji')} Serveur", value=server_type_french, inline=True)
         embed.add_field(name="", value="", inline=True)
-        embed.add_field(name="", value=f"{debut_emoji} **Début**: `{start_time.strftime('%d / %m / %Y à %H h %M')}`", inline=False)
+        embed.add_field(name="", value=f"{get_emoji('debut_emoji')} **Début**: `{start_time.strftime('%d / %m / %Y à %H h %M')}`", inline=False)
         
         await interaction.response.send_message(embed=embed)
     else:
@@ -523,7 +782,7 @@ async def set_grade(interaction, *, grade: str):
             embed=create_small_embed(f"{grade} attribué avec succès.")
             await interaction.response.send_message(embed=embed, ephemeral=True)
         else:
-            embed=create_small_embed(f"Le rôle correspondant n'a pas été trouvé {no_emoji}")
+            embed=create_small_embed(f"Le rôle correspondant n'a pas été trouvé {get_emoji('no_emoji')}")
             await interaction.response.send_message(embed=embed, ephemeral=True)
     else:
         embed = create_small_embed("Grade invalide. Les grades valides sont : Endium, Paladin, Titan, Trixium, Trixium+.")
@@ -546,10 +805,10 @@ async def grade_search(interaction, grade: str):
             )
             await interaction.response.send_message(embed=embed)
         else:
-            embed=create_small_embed(f"Le rôle correspondant n'a pas été trouvé {no_emoji}")
+            embed=create_small_embed(f"Le rôle correspondant n'a pas été trouvé {get_emoji('no_emoji')}")
             await interaction.response.send_message(embed=embed, ephemeral=True)
     else:
-        embed=create_small_embed(f"Le rôle correspondant n'a pas été trouvé {no_emoji}")
+        embed=create_small_embed(f"Le rôle correspondant n'a pas été trouvé {get_emoji('no_emoji')}")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 ######################################## RUBRIQUE DES METIERS  ########################################################
@@ -566,7 +825,7 @@ async def niveau_add(interaction, metier : str, niveau : int):
     """ajouter ou mettre à jour un niveau"""
     metiers_valides = ["alchi", "hunter", "miner", "farmer"]
     if metier.lower() not in metiers_valides:
-        embed=create_small_embed(f"Métier invalide. Veuillez choisir parmi {fleche_emoji} **alchi, hunter, miner, farmer**.")
+        embed=create_small_embed(f"Métier invalide. Veuillez choisir parmi {get_emoji('fleche_emoji')} **alchi, hunter, miner, farmer**.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
         return
 
@@ -576,7 +835,7 @@ async def niveau_add(interaction, metier : str, niveau : int):
     niveaux[utilisateur][metier.lower()] = int(niveau)
     with open('niveaux.json', 'w') as f:
         json.dump(niveaux, f)
-    embed=create_small_embed(f"Niveau de {metier} mis à jour {boost_emoji}")
+    embed=create_small_embed(f"Niveau de {metier} mis à jour {get_emoji('boost_emoji')}")
     await interaction.response.send_message(embed=embed,ephemeral=True)
 
 @bot.tree.command()
@@ -585,7 +844,7 @@ async def niveau(interaction, metier : str):
     """Afficher le niveaux le plus élevé d'un métier"""
     metiers_valides = ["alchi", "hunter", "miner", "farmer"]
     if metier.lower() not in metiers_valides:
-        embed=create_small_embed(f"Métier invalide. Veuillez choisir parmi **alchi, hunter, miner ou farmer** {no_emoji}")
+        embed=create_small_embed(f"Métier invalide. Veuillez choisir parmi **alchi, hunter, miner ou farmer** {get_emoji('no_emoji')}")
         await interaction.response.send_message(embed=embed, ephemeral=True)
         return
 
@@ -603,10 +862,10 @@ async def niveau(interaction, metier : str):
             embed=create_small_embed(f"La personne {membre.mention} est niveau {niveau_max} en métier {metier}.")
             await interaction.response.send_message(embed=embed, ephemeral=True)
         else:
-            embed=create_small_embed(f"Impossible de trouver cet utilisateur {red_emoji}")
+            embed=create_small_embed(f"Impossible de trouver cet utilisateur {get_emoji('red_emoji')}")
             await interaction.response.send_message(embed=embed, ephemeral=True)
     else:
-        embed=create_small_embed(f"Aucun utilisateur n'a encore défini de niveau pour ce métier.{boost_emoji}")
+        embed=create_small_embed(f"Aucun utilisateur n'a encore défini de niveau pour ce métier.{get_emoji('boost_emoji')}")
         await interaction.response.send_message(embed=embed, ephemeral=True)
     
 ###################################### COINS #####################################################
@@ -640,7 +899,7 @@ async def g_coin(interaction: discord.Interaction, member: discord.Member, amoun
     old_balance = coin_balances.get(member_id_str, 0)
     coin_balances[member_id_str] += amount
     new_balance = coin_balances[member_id_str]
-    embed=create_small_embed(f"{member.mention} a reçu```{amount}``` {coin_emoji}.")
+    embed=create_small_embed(f"{member.mention} a reçu```{amount}``` {get_emoji('coin_emoji')}.")
     await interaction.response.send_message(embed=embed)
     save_coin_balances()
                                             
@@ -656,7 +915,7 @@ async def r_coin(interaction: discord.Interaction, member: discord.Member, amoun
         old_balance = coin_balances[member_id_str]
         coin_balances[member_id_str] = max(0, old_balance - amount)
         new_balance = coin_balances[member_id_str]
-        embed=create_small_embed(f"{member.mention} a perdu ```{amount}``` {coin_emoji}.")
+        embed=create_small_embed(f"{member.mention} a perdu ```{amount}``` {get_emoji('coin_emoji')}.")
         await interaction.response.send_message(embed=embed)
         save_coin_balances()
                                             
@@ -670,13 +929,13 @@ async def coins(interaction: discord.Interaction, member: discord.Member):
             member_id_str = str(member.id)
             if member_id_str in coin_balances:
                 balance = coin_balances[member_id_str]
-                embed=create_small_embed(f"Le solde de {member.mention} est de ```{balance}``` {coin_emoji}")
+                embed=create_small_embed(f"Le solde de {member.mention} est de ```{balance}``` {get_emoji('coin_emoji')}")
                 await interaction.response.send_message(embed=embed, ephemeral=True)
             else:
                 embed=create_small_embed(f"L'utilisateur {member.mention} n'a pas de solde de coins existant.")
                 await interaction.response.send_message(embed=embed, ephemeral=True)
     except FileNotFoundError:
-        embed=create_small_embed(f"Le fichier 'coin_balances.json' n'existe pas ou est vide{red_emoji}")
+        embed=create_small_embed(f"Le fichier 'coin_balances.json' n'existe pas ou est vide{get_emoji('red_emoji')}")
         await interaction.response.send_message(embed=embed, ephemeral=True)
                                             
 @bot.tree.command()
@@ -689,13 +948,13 @@ async def me(interaction):
             coin_balances = json.load(f)
             if str(user_id) in coin_balances:
                 balance = coin_balances[str(user_id)]
-                embed = create_small_embed(f"Vous possédez : `{balance}` {coin_emoji}.")
+                embed = create_small_embed(f"Vous possédez : `{balance}` {get_emoji('coin_emoji')}.")
                 message = await interaction.response.send_message(embed=embed, ephemeral=True)
             else:
-                embed = create_small_embed(f"Vous n'avez pas de solde de coins existant.{no_emoji}")
+                embed = create_small_embed(f"Vous n'avez pas de solde de coins existant.{get_emoji('no_emoji')}")
                 await interaction.response.send_message(embed=embed, ephemeral=True)
     except FileNotFoundError:
-        embed=create_small_embed(f"Le fichier de suavegarde n'existe pas ou est vide. {no_emoji} _Contact Addd78130 d'urgence !_ {ailes_emoji}")
+        embed=create_small_embed(f"Le fichier de sauvegarde n'existe pas ou est vide. {get_emoji('no_emoji')} Contact Addd78130 d'urgence !_ {get_emoji('ailes_emoji')}")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 def save_coin_balances():
     with open("coin_balances.json", "w") as f:
@@ -716,7 +975,7 @@ async def baltop(interaction):
         user = interaction.guild.get_member(int(user_id))
         username = user.name if user else f"Utilisateur inconnu ({user_id})"
         field_name = f"{index}. {username}"
-        field_value = f"{balance} {coin_emoji}"
+        field_value = f"{balance} {get_emoji('no_emoji')}"
         if len(field_str) + len(field_name) + len(field_value) + 5 > 1024:
             break
         field_str += f"{field_name}: {field_value}\n"
@@ -884,7 +1143,15 @@ async def on_ready():
         channel = bot.get_channel(channel_id)
         if channel:
             view = TicketBuyActionsView(user_id, refund_amount, item, staff_role_id)
-            bot.add_view(view, message_id=channel.last_message_id)
+        global alert_task, last_interaction_time
+    state = await load_alert_state()
+    last_interaction_time = state['last_interaction_time']
+    
+    if alert_task is None or alert_task.done():
+        channel_id = 1269739832146661376
+        channel = bot.get_channel(channel_id)
+        if channel:
+            alert_task = bot.loop.create_task(send_alert_if_needed(channel))
 
 @bot.tree.command()
 async def send_buy(interaction):
@@ -905,10 +1172,10 @@ async def absence(interaction: discord.Interaction,raison:str,date:str) -> None:
 		return
 	try:		
 		if datetime.strptime(date,'%d/%m/%Y') < datetime.now():
-			await interaction.response.send_message(create_small_embed(f"La date n'est pas valide, merci de recommencer avec une date valide {no_emoji}"), ephemeral=True)
+			await interaction.response.send_message(create_small_embed(f"La date n'est pas valide, merci de recommencer avec une date valide {get_emoji('no_emoji')}"), ephemeral=True)
 			return
 	except:
-		await interaction.response.send_message(create_small_embed(f"La date n'est pas valide, merci de recommencer avec une date valide {no_emoji}"), ephemeral=True)
+		await interaction.response.send_message(create_small_embed(f"La date n'est pas valide, merci de recommencer avec une date valide {get_emoji('no_emoji')}"), ephemeral=True)
 		return
 	with open('absence.json', 'r') as f:
 		ab = json.load(f)
@@ -922,7 +1189,7 @@ async def absence(interaction: discord.Interaction,raison:str,date:str) -> None:
 	await chanel.send(create_embed(title=f"Absence de {interaction.user.mention}", description=f"{interaction.user.mention} est absent jusqu'au {date} pour {raison}"))
 	role = interaction.guild.get_role(1215396472162488381)
 	await interaction.user.add_roles(role)
-	await interaction.response.send_message(create_small_embed(f'Votre absence a bien été prise en compte {yes_emoji}'), ephemeral=True)
+	await interaction.response.send_message(create_small_embed(f"Votre absence a bien été prise en compte {get_emoji('yes_emoji')}"), ephemeral=True)
 
 @tasks.loop(seconds = 360)
 async def abs():
@@ -969,12 +1236,12 @@ async def send_remote_button_rc(interaction: discord.Interaction):
     """Envoyer l'embed des ticket + Bouton"""
     staff_role_rc = interaction.guild.get_role(STAFF_ROLE_ID)
     if staff_role_rc not in interaction.user.roles:
-        embed = create_small_embed(f"Vous n'avez pas la permission d'utiliser cette commande {no_emoji}")
+        embed = create_small_embed(f"Vous n'avez pas la permission d'utiliser cette commande {get_emoji('no_emoji')}")
         await interaction.response.send_message(embed=embed, ephemeral=True)
         return
 
     embed = discord.Embed(
-        title=f"{crown_emoji} Recrutement Elysiium !!!",
+        title=f"{get_emoji('crown_emoji')} Recrutement Elysiium !!!",
         description=(
             "Bienvenue à tous sur le merveilleux serveur de La Elysiium Faction.\n\n"
             "Afin d'optimiser les recrutements, nous les avons organisés sous forme de ticket donc pour toute demande de recrutement, veuillez interagir avec le bouton ci-dessous "
@@ -988,10 +1255,10 @@ async def send_remote_button_rc(interaction: discord.Interaction):
     remote_channel_rc = interaction.guild.get_channel(REMOTE_CHANNEL_ID)
     if remote_channel_rc:
         await remote_channel_rc.send(embed=embed, view=view)
-        embed = create_small_embed(f"Panel envoyé avec succès {yes_emoji}")
+        embed = create_small_embed(f"Panel envoyé avec succès {get_emoji('yes_emoji')}")
         await interaction.response.send_message(embed=embed, ephemeral=True)
     else:
-        embed = create_small_embed(f"Le salon de télécommande spécifié n'a pas été trouvé {no_emoji}")
+        embed = create_small_embed(f"Le salon de télécommande spécifié n'a pas été trouvé {get_emoji('no_emoji')}")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 class RemoteButtonView(discord.ui.View):
@@ -1001,13 +1268,13 @@ class RemoteButtonView(discord.ui.View):
     @discord.ui.button(label="📨 Ouvrir un Ticket", style=discord.ButtonStyle.primary, custom_id="open_ticket")
     async def open_ticket_rc(self, interaction: discord.Interaction, button: discord.ui.Button):
         if CATEGORY_ID is None:
-            embed = create_small_embed(f"La catégorie pour les tickets n'a pas été configurée {no_emoji}")
+            embed = create_small_embed(f"La catégorie pour les tickets n'a pas été configurée {get_emoji('no_emoji')}")
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
         category_rc = interaction.guild.get_channel(CATEGORY_ID)
         if not category_rc or not isinstance(category_rc, discord.CategoryChannel):
-            embed = create_small_embed(f"La catégorie spécifiée n'existe pas ou n'est pas valide {no_emoji}")
+            embed = create_small_embed(f"La catégorie spécifiée n'existe pas ou n'est pas valide {get_emoji('no_emoji')}")
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
@@ -1017,7 +1284,7 @@ class RemoteButtonView(discord.ui.View):
             get(interaction.guild.roles, id=STAFF_ROLE_ID): discord.PermissionOverwrite(read_messages=True, send_messages=True, read_message_history=True)
         }
         ticket_channel_rc = await category_rc.create_text_channel(f"ticket-{interaction.user.name}", overwrites=overwrites_rc)
-        embed = create_small_embed(f"Ticket créé : {ticket_channel_rc.mention} {ticket_emoji}")
+        embed = create_small_embed(f"Ticket créé : {ticket_channel_rc.mention} {get_emoji('ticket_emoji')}")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
         embed = discord.Embed(
@@ -1052,7 +1319,7 @@ class TicketActionView(discord.ui.View):
     async def close_ticket_rc(self, interaction: discord.Interaction, button: discord.ui.Button):
         role_rc = get(interaction.guild.roles, id=STAFF_ROLE_ID)
         if role_rc not in interaction.user.roles:
-            small_embed = create_small_embed(f"Vous n'avez pas les permissions pour fermer ce ticket, veuillez annuler votre demande {no_emoji}")
+            small_embed = create_small_embed(f"Vous n'avez pas les permissions pour fermer ce ticket, veuillez annuler votre demande {get_emoji('no_emoji')}")
             await interaction.response.send_message(embed=small_embed, ephemeral=True)
             return
 
@@ -1063,7 +1330,7 @@ class TicketActionView(discord.ui.View):
             await log_channel_rc.send(embed=embed_log_rc)
             await ticket_channel_rc.delete()
             user_rc = interaction.user
-            embed_mp_rc = create_small_embed(f"Ticket fermé avec succès.{yes_emoji}")
+            embed_mp_rc = create_small_embed(f"Ticket fermé avec succès.{get_emoji('yes_emoji')}")
             await user_rc.send(embed=embed_mp_rc)
 
             all_tickets_rc = load_ticket_data_rc("ticket_recrutement.json")
@@ -1074,7 +1341,7 @@ class TicketActionView(discord.ui.View):
     @discord.ui.button(label="Annuler la Demande", style=discord.ButtonStyle.secondary, custom_id="cancel_ticket")
     async def cancel_ticket_rc(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user_id_rc:
-            embed_stop_rc = create_small_embed(f"Seul l'utilisateur ayant ouvert le ticket peut annuler la demande {no_emoji}")
+            embed_stop_rc = create_small_embed(f"Seul l'utilisateur ayant ouvert le ticket peut annuler la demande {get_emoji('no_emoji')}")
             await interaction.response.send_message(embed=embed_stop_rc, ephemeral=True)
             return
 
@@ -1121,7 +1388,7 @@ async def kick(interaction, member: discord.Member, reason: str):
     log_message = discord.Embed(title="😶‍🌫️ Leave", description=f"La personne {member.display_name} a quitté la faction, kick par {interaction.user} pour le motif : {reason}", color=0x1E1730)
     await log_channel.send(embed=log_message)
     
-    await interaction.response.send_message("✅")
+    await interaction.response.send_message(f"{get_emoji('yes_emoji')}")
 @bot.tree.command()
 @discord.app_commands.checks.has_role(recruteur)
 async def admis(interaction, member: discord.Member, specialisation: str):
@@ -1174,7 +1441,7 @@ async def admis(interaction, member: discord.Member, specialisation: str):
         await member.add_roles(faction)
         spe = "PvP"
     else:
-        embed=create_small_embed(f"Erreur lors de la commande {red_emoji}")
+        embed=create_small_embed(f"Erreur lors de la commande {get_emoji('red_emoji')}")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     log_channel = guild.get_channel(1236223187923111946)
@@ -1182,10 +1449,128 @@ async def admis(interaction, member: discord.Member, specialisation: str):
     await log_channel.send(embed=log_message)
     message = discord.Embed(title="👋 Welcome !", description="Bienvenue dans la fac !!!", color=0x060270)
     await member.send(embed=message)
-    await interaction.response.send_message(f"{yes_emoji}")
+    await interaction.response.send_message(f"{get_emoji('yes_emoji')}")
 
     
 ################################## UTILITAIRE ###########################################
+
+class GiveawayButton(discord.ui.View):
+    def __init__(self, prize):
+        super().__init__(timeout=None)
+        self.prize = prize
+        self.giveaway_active = True
+
+    @discord.ui.button(label="Participate", style=discord.ButtonStyle.green, custom_id="participate_button")
+    async def participate_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.giveaway_active:
+            await interaction.response.send_message("The giveaway has ended. You can no longer participate.", ephemeral=True)
+            return
+
+        user_id = str(interaction.user.id)
+        data = load_giveaway_data()
+
+        if self.prize not in data:
+            data[self.prize] = {'participants': [], 'end_time': '', 'message_id': ''}
+
+        if user_id not in data[self.prize]['participants']:
+            data[self.prize]['participants'].append(user_id)
+            save_giveaway_data(data)
+            await interaction.response.send_message("You have successfully participated!", ephemeral=True)
+        else:
+            await interaction.response.send_message("You have already participated.", ephemeral=True)
+
+    def end_giveaway(self):
+        self.giveaway_active = False
+
+def load_giveaway_data():
+    try:
+        with open('giveaway.json', 'r') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+def save_giveaway_data(data):
+    with open('giveaway.json', 'w') as f:
+        json.dump(data, f, indent=4)
+
+def parse_duration(duration_str):
+    pattern = r'(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?'
+    match = re.match(pattern, duration_str)
+    if not match:
+        raise ValueError("Invalid duration format")
+    days, hours, minutes, seconds = match.groups(default="0")
+    total_seconds = int(days) * 86400 + int(hours) * 3600 + int(minutes) * 60 + int(seconds)
+    return total_seconds
+
+async def update_giveaway_embed(message, end_time, prize):
+    while True:
+        remaining_time = end_time - datetime.utcnow()
+        if remaining_time.total_seconds() <= 0:
+            break
+        embed = discord.Embed(title="🎉 Giveaway 🎉", description=f"Prize: {prize}", color=0x00ff00)
+        embed.add_field(name="How to enter", value="Click the button below to participate!")
+        embed.set_footer(text=f"Ends in {str(remaining_time).split('.')[0]}")
+        await message.edit(embed=embed)
+        await asyncio.sleep(1)
+
+async def resume_giveaway(channel_id, message_id, end_time, prize):
+    channel = bot.get_channel(channel_id)
+    if channel is None:
+        channel = await bot.fetch_channel(channel_id)
+    message = await channel.fetch_message(message_id)
+    await update_giveaway_embed(message, end_time, prize)
+    await finish_giveaway(message, prize)
+
+
+async def finish_giveaway(message, prize):
+    data = load_giveaway_data()
+    if prize in data and data[prize]['participants']:
+        winner_id = random.choice(data[prize]['participants'])
+        winner = await bot.fetch_user(winner_id)
+        await message.reply(f"Congratulations {winner.mention}! You won the {prize}!")
+        del data[prize]
+        save_giveaway_data(data)
+    else:
+        await message.reply("No one participated in the giveaway.")
+    
+    view = message.components[0].children[0].view
+    view.end_giveaway()
+
+
+
+@bot.tree.command(name='giveaway')
+async def giveaway(interaction: discord.Interaction, duration: str, prize: str):
+    try:
+        total_seconds = parse_duration(duration)
+    except ValueError as e:
+        await interaction.response.send_message(str(e), ephemeral=True)
+        return
+
+    embed = discord.Embed(title="🎉 Giveaway 🎉", description=f"Prize: {prize}", color=0x00ff00)
+    embed.add_field(name="How to enter", value="Click the button below to participate!")
+    embed.set_footer(text=f"Ends in {duration}")
+
+    view = GiveawayButton(prize)
+    await interaction.response.send_message(embed=embed, view=view)
+    message = await interaction.original_response()
+
+    end_time = datetime.utcnow() + timedelta(seconds=total_seconds)
+
+    data = load_giveaway_data()
+    data[prize] = {
+        'participants': [],
+        'end_time': end_time.isoformat(),
+        'message_id': message.id,
+        'channel_id': message.channel.id 
+    }
+    
+    save_giveaway_data(data)
+    
+    asyncio.create_task(update_giveaway_embed(message, end_time, prize))
+
+    await asyncio.sleep(total_seconds)
+    await finish_giveaway(message, prize)
+
 
 async def delete_message(message, delay):
     await asyncio.sleep(delay)
@@ -1382,10 +1767,10 @@ async def suggestions(interaction,*,suggestion: str):
     if suggestion_channel:
         embed=create_small_embed(f"{interaction.user} a suggéré : {suggestion}")
         await suggestion_channel.send(embed=embed)
-        embed=create_small_embed(f"Suggestion envoyée avec succès {yes_emoji}!")
+        embed=create_small_embed(f"Suggestion envoyée avec succès {get_emoji('yes_emoji')}!")
         await interaction.response.send_message(embed=embed, ephemeral=True)
     else:
-        embed=create_small_embed(f"Le salon de suggestions n'a pas été trouvé.{no_emoji}")
+        embed=create_small_embed(f"Le salon de suggestions n'a pas été trouvé.{get_emoji('no_emoji')}")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 ####################################### ON MESSAGE + BOT.EVENT #####################################
@@ -1522,7 +1907,7 @@ async def on_member_join(member):
     """Envoyer un message de bienvenue aux nouveaux membres."""
     embed = discord.Embed(
         title="Bienvenue sur le Discord de la Elysiium Faction !",
-        description=f"Je suis le ElysiiumBot développé par Addd78130, le chef de la faction. {boost_emoji}\n\n"
+        description=f"Je suis le ElysiiumBot développé par Addd78130, le chef de la faction.{get_emoji('boost_emoji')}\n\n"
                     "En arrivant sur le discord, je te conseille de prendre conscience du règlement "
                     "et d'accepter ce dernier afin d'obtenir les rôles pour accéder aux différents canaux.\n\n"
                     "Aussi, si tu es ici pour un recrutement, rends-toi dans le salon recrutement et crée un ticket "
@@ -1549,21 +1934,21 @@ async def warn(interaction, member: discord.Member, *, reason: str):
         if warm1_role in member.roles:
             await member.remove_roles(warm1_role)
             await member.add_roles(warm2_role)
-            await interaction.response.send_message(f"Sanction appliquée {yes_emoji}", ephemeral=True)
+            await interaction.response.send_message(f"Sanction appliquée {get_emoji('yes_emoji')}", ephemeral=True)
             await warm_log_channel.send(f"{member.mention} a été promu au rôle Warm 2 par {executor.mention} pour la raison : {reason}")
-            embed = discord.Embed(title=f"{red_emoji} Avertissement ! {red_emoji}", description=f"Vous avez reçu un avertissement pour la raison suivante : {reason}, {member.mention}", color=discord.Color.red())
+            embed = discord.Embed(title=f"{get_emoji('red_emoji')} Avertissement ! {get_emoji('red_emoji')}", description=f"Vous avez reçu un avertissement pour la raison suivante : {reason}, {member.mention}", color=discord.Color.red())
             await member.send(embed=embed)
             await member.send(f"{member.mention}")
         elif warm2_role in member.roles:
             await member.add_roles(warm1_role)
-            await interaction.response.send_message(f"Sanction appliquée {yes_emoji}", ephemeral=True)
+            await interaction.response.send_message(f"Sanction appliquée {get_emoji('yes_emoji')}", ephemeral=True)
             await warm_log_channel.send(f"{member.mention} a reçu un autre avertissement (Warm 1) par {executor.mention} pour la raison : {reason}")
-            embed = discord.Embed(title="{red_emoji} Avertissement ! {red_emoji}", description=f"Vous avez reçu un second avertissement pour la raison suivante : {reason}", color=discord.Color.red())
+            embed = discord.Embed(title=f"{get_emoji('red_emoji')} Avertissement ! {get_emoji('red_emoji')}", description=f"Vous avez reçu un second avertissement pour la raison suivante : {reason}", color=discord.Color.red())
             await member.send(embed=embed)
             await member.send(f"{member.mention}")
         else:
             await member.add_roles(warm1_role)
-            await interaction.response.send_message(f"Sanction appliquée {yes_emoji}", ephemeral=True)
+            await interaction.response.send_message(f"Sanction appliquée {get_emoji('yes_emoji')}", ephemeral=True)
             await warm_log_channel.send(f"{member.mention} a été averti (Warm 1) par {executor.mention} pour la raison : {reason}")
     else:
         await interaction.response.send_message("Les rôles Warm 1 et Warm 2 n'ont pas été trouvés ou le salon de log Warm n'a pas été trouvé.", ephemeral=True)
@@ -1574,13 +1959,13 @@ async def ban(interaction: discord.Interaction, member: discord.Member, *, raiso
     '''Ban'''
     guild = interaction.guild
     embed_ = discord.Embed(
-        title=f'{ban_emoji} Ban {ban_emoji}',
+        title=f"{get_emoji('ban_emoji')} Ban {get_emoji('ban_emoji')}",
         description=f"Vous avez été banni du serveur Elysiium Faction pour la raison suivante : **{raison}**",
         color=discord.Color.red()
     )
     try:
         await member.send(embed=embed_)
-        message = f'{member} à été banni {ban_emoji}'
+        message = f"{member} à été banni {get_emoji('ban_emoji')}"
     except:
         message = f"Le message n'a pas pu être envoyé à {member} mais il a bien été banni"
 
@@ -1589,7 +1974,7 @@ async def ban(interaction: discord.Interaction, member: discord.Member, *, raiso
     log_channel = bot.get_channel(LOG_CHANNEL_ID)
     await log_channel.send(embed=create_small_embed(f'{member.mention} a été ban par {interaction.user.mention} pour {raison}'))
 
-    await interaction.response.send_message(f"{yes_emoji}", ephemeral=True)
+    await interaction.response.send_message(f"{get_emoji('yes_emoji')}", ephemeral=True)
 
 
 
@@ -1668,8 +2053,8 @@ else:
     bot.run(TOTO)
 
 async def update_status():
-    for i in range(1000000000000000000000):
-    	server = bot.guilds[0]
-    	member_count = server.member_count
-    	await bot.change_presence(status=discord.Status.dnd, activity=discord.Activity(type=discord.ActivityType.watching, name=f"{member_count} membres"))
-    	asyncio.sleep(3)
+    while True:
+        server = bot.guilds[0]
+        member_count = server.member_count
+        await bot.change_presence(status=discord.Status.dnd, activity=discord.Activity(type=discord.ActivityType.watching, name=f"{member_count} membres"))
+        asyncio.sleep(3)
