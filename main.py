@@ -3,6 +3,7 @@ import json
 import typing
 import re
 from discord.utils import get
+import pytz
 import requests
 from math import floor
 import os
@@ -16,7 +17,7 @@ from datetime import datetime, timezone, timedelta
 from discord.ext import commands
 from collections import defaultdict
 import time
-TOTO = 'TOKEN'
+TOTO = ''
 Addd78130_user_id = 781524251332182016
 chef_role = 1031253346436268162
 json_bc_filename = "ressources_bc.json"
@@ -47,20 +48,6 @@ class PersistentViewBot(commands.Bot):
         views = [RouletteView(), RemoteButtonView(), AvoMarquesButtonView(), ItemSelectorView(), PanelCheckBC()]
         for element in views:
             self.add_view(element)
-     
-        data = load_giveaway_data()
-        for prize, giveaway_info in data.items():
-            if isinstance(giveaway_info, dict):
-                end_time = datetime.fromisoformat(giveaway_info['end_time'])
-                if end_time > datetime.utcnow():
-                    view = GiveawayButton(prize)
-                    self.add_view(view)
-                    asyncio.create_task(resume_giveaway(
-                        giveaway_info['channel_id'],
-                        giveaway_info['message_id'], 
-                        end_time, 
-                        prize
-                    ))
 
 
         
@@ -91,45 +78,184 @@ def load_coin_balances():
     
     
 ###################### ARKANE ################################
-@bot.tree.command(name='listemojis')
-async def list_emojis(interaction: discord.Interaction):
-    emojis = interaction.guild.emojis
-    if not emojis:
-        await interaction.response.send_message("Il n'y a pas d'emojis sur ce serveur.")
-        return
+EVENT_CHANNEL_ID = 1275190953652650046
 
-    emoji_dict = {emoji.name: f"<{'a' if emoji.animated else ''}:{emoji.name}:{emoji.id}>" for emoji in emojis}
+event_schedule = {
+    "lundi": [
+        {"name": "BOSS", "time": "01:00"},
+        {"name": "BOSS", "time": "10:00"},
+        {"name": "BOSS", "time": "18:00"},
+        {"name": "EGGHUNT", "time": "19:00", "end_time": "20:00"},
+        {"name": "A VOS MARQUES", "time": "20:30", "end_time": "21:00"},
+        {"name": "BOSS", "time": "22:00"},
+    ],
+    "mardi": [
+        {"name": "BOSS", "time": "01:00"},
+        {"name": "BOSS", "time": "10:00"},
+        {"name": "BOSS", "time": "18:00"},
+        {"name": "EGGHUNT", "time": "19:00", "end_time": "20:00"},
+        {"name": "A VOS MARQUES", "time": "20:30", "end_time": "21:00"},
+        {"name": "BOSS", "time": "22:00"},
+    ],
+    "mercredi": [
+        {"name": "BOSS", "time": "01:00"},
+        {"name": "BOSS", "time": "10:00"},
+        {"name": "A VOS MARQUES", "time": "16:00", "end_time": "16:30"},
+        {"name": "BOSS", "time": "18:00"},
+        {"name": "EGGHUNT", "time": "19:00", "end_time": "20:00"},
+        {"name": "TOTEM", "time": "21:00"},
+        {"name": "BOSS", "time": "22:00"},
+    ],
+    "jeudi": [
+        {"name": "BOSS", "time": "01:00"},
+        {"name": "BOSS", "time": "10:00"},
+        {"name": "BOSS", "time": "18:00"},
+        {"name": "EGGHUNT", "time": "19:00", "end_time": "20:00"},
+        {"name": "A VOS MARQUES", "time": "20:30", "end_time": "21:00"},
+        {"name": "BOSS", "time": "22:00"},
+    ],
+    "vendredi": [
+        {"name": "BOSS", "time": "01:00"},
+        {"name": "BOSS", "time": "10:00"},
+        {"name": "BOSS", "time": "18:00"},
+        {"name": "EGGHUNT", "time": "19:00", "end_time": "20:00"},
+        {"name": "A VOS MARQUES", "time": "21:00", "end_time": "21:30"},
+        {"name": "BOSS", "time": "22:00"},
+    ],
+    "samedi": [
+        {"name": "BOSS", "time": "01:00"},
+        {"name": "BOSS", "time": "10:00"},
+        {"name": "A VOS MARQUES", "time": "15:00", "end_time": "15:30"},
+        {"name": "BOSS", "time": "18:00"},
+        {"name": "EGGHUNT", "time": "19:00", "end_time": "20:00"},
+        {"name": "KOTH", "time": "21:00"},
+        {"name": "BOSS", "time": "22:00"},
+        {"name": "TEST", "time": "23:13"}
+    ],
+    "dimanche": [
+        {"name": "BOSS", "time": "01:00"},
+        {"name": "BOSS", "time": "10:00"},
+        {"name": "A VOS MARQUES", "time": "15:00", "end_time": "15:30"},
+        {"name": "BOSS", "time": "18:00"},
+        {"name": "EGGHUNT", "time": "19:00", "end_time": "20:00"},
+        {"name": "BOSS", "time": "22:00"},
+    ]
+}
+
+
+STATE_FILE = "bot_state.json"
+
+def load_bot_state():
+    try:
+        with open(STATE_FILE, "r") as file:
+            return json.load(file)
+    except FileNotFoundError:
+        return {"last_event_time": None}
+
+def save_bot_state(state):
+    with open(STATE_FILE, "w") as file:
+        json.dump(state, file)
+
+def time_to_datetime(time_str):
+    now = datetime.now(pytz.timezone("Europe/Paris"))
+    return datetime.strptime(time_str, "%H:%M").replace(
+        year=now.year, month=now.month, day=now.day, tzinfo=now.tzinfo
+    )
+MONITOR_DURATION = 45 * 60 
+
+async def create_thread_for_event(event_name, message):
+    thread_name = f"{event_name} - {datetime.now().strftime('%H:%M')}"
+    thread = await message.create_thread(name=thread_name, auto_archive_duration=60)
+    await monitor_thread(thread)
+
+async def monitor_thread(thread):
+    await asyncio.sleep(MONITOR_DURATION)
+    async for message in thread.history(after=datetime.utcnow() - timedelta(seconds=MONITOR_DURATION)):
+        if message.attachments:
+            member_id = str(message.author.id)
+            member_data = await load_member_data()
+
+            if member_id not in member_data:
+                member_data[member_id] = {"boss_kills": 0, "check_bc": 0, "a_vos_marques": 0}
+
+            member_data[member_id]["a_vos_marques"] += 1
+            await save_member_data(member_data)
     
-    with open('emojis.json', 'w') as f:
-        json.dump(emoji_dict, f, indent=4)
+    await thread.archive()
 
-    formatted_emoji_list = '\n'.join([f"{name}: {value}" for name, value in emoji_dict.items()])
+@tasks.loop(minutes=1)
+async def event_notification():
+    state = load_bot_state()
+    now = datetime.now(pytz.timezone("Europe/Paris"))
+    day_name = now.strftime("%A").lower()
 
-    max_message_length = 2000
-    for i in range(0, len(formatted_emoji_list), max_message_length):
-        await interaction.response.send_message(formatted_emoji_list[i:i + max_message_length])
+    if day_name in event_schedule:
+        for event in event_schedule[day_name]:
+            event_time = time_to_datetime(event["time"]) - timedelta(minutes=15)
 
-    await interaction.response.send_message("Le fichier JSON a été créé.")
+            if state["last_event_time"] != event_time.strftime("%Y-%m-%d %H:%M"):
+                if now >= event_time and now < event_time + timedelta(minutes=1):
+                    channel = bot.get_channel(EVENT_CHANNEL_ID)
+                    message = await channel.send(f"@everyone {event['name']} commence dans 15 minutes !")
+
+                    if "A VOS MARQUES" in event["name"].upper():
+                        await create_thread_for_event(event["name"], message)
+
+                    state["last_event_time"] = event_time.strftime("%Y-%m-%d %H:%M")
+                    save_bot_state(state)
+
+@bot.tree.command(name="start_notifications")
+async def start_notifications(interaction):
+    event_notification.start()
+    await interaction.response.send_message("La vérification des événements a commencé.")
+
+@bot.tree.command(name="stop_notifications")
+async def stop_notifications(interaction):
+    event_notification.stop()
+    await interaction.response.send_message("La vérification des événements est arrêtée.")
+
+
+@bot.tree.command(name="boss_winner", description="Augmente le nombre de boss tués pour un membre")
+async def boss_winner(interaction: discord.Interaction, member: discord.Member):
+    member_id = str(member.id)
+    member_data = await load_member_data()
+
+    if member_id not in member_data:
+        member_data[member_id] = {"boss_kills": 0, "check_bc": 0, "a_vos_marques": 0}
+
+    member_data[member_id]["boss_kills"] += 1
+    await save_member_data(member_data)
+
+    await interaction.response.send_message(f"Le nombre de boss tués pour {member.display_name} est maintenant {member_data[member_id]['boss_kills']} !")
 
 info_member_path = 'infos_membres.json'
 message_store_path = 'messages.json'
 
 @bot.tree.command(name="member", description="Affiche les informations d'un membre")
-async def member(interaction: discord.Interaction, pseudo: str):
+async def member(interaction: discord.Interaction, member: discord.Member, reset: str = "non"):
+    member_id = str(member.id)
     infos_membres = await load_member_data()
-    
-    if pseudo in infos_membres:
-        member_info = infos_membres[pseudo]
+
+    if member_id in infos_membres:
+        member_info = infos_membres[member_id]
         embed = discord.Embed(
-            title=f"Informations pour {pseudo}",
+            title=f"Informations pour {member.display_name}",
             color=discord.Color.blue()
         )
         embed.add_field(name="Nombre de Boss tués", value=member_info.get("boss_kills", "N/A"), inline=False)
         embed.add_field(name="Nombre de check BC fait", value=member_info.get("check_bc", "N/A"), inline=False)
         embed.add_field(name="Nombre de A vos marques faits", value=member_info.get("a_vos_marques", "N/A"), inline=False)
+        
         await interaction.response.send_message(embed=embed)
+        
+        if reset.lower() == "oui":
+            await asyncio.sleep(2)  
+            del infos_membres[member_id]
+            await save_member_data(infos_membres)
+            await interaction.channel.send(f"Les statistiques pour {member.display_name} ont été réinitialisées.")
     else:
-        await interaction.response.send_message(f"Membre {pseudo} non trouvé.", ephemeral=True)
+        await interaction.response.send_message(f"Membre {member.display_name} non trouvé.", ephemeral=True)
+
 async def load_alert_state():
     try:
         with open('alert_state.json', 'r') as f:
@@ -172,7 +298,8 @@ async def save_message_data(data):
 
 class PanelCheckBC(View):
     def __init__(self):
-        super().__init__(timeout=None)  # Timeout à None pour rendre la vue persistante
+        super().__init__(timeout=None)
+
     @discord.ui.button(label='✅RAS', style=discord.ButtonStyle.green, custom_id='button_ras')
     async def button_ras(self, interaction: discord.Interaction, button: discord.ui.Button):
         await handle_button_click(interaction, "RAS")
@@ -185,15 +312,50 @@ class PanelCheckBC(View):
     async def button_alert2(self, interaction: discord.Interaction, button: discord.ui.Button):
         await handle_button_click(interaction, "Alerte 2")
 
+    @discord.ui.button(label='🔴Alerte 3', style=discord.ButtonStyle.red, custom_id='button_alert3')
+    async def button_alert3(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await handle_button_click(interaction, "Alerte 3")
+
+
 async def handle_button_click(interaction, alert_type):
     global last_interaction_time, alert_task
-    embed = discord.Embed(title=f"Notification: {alert_type}", description=f"Vous avez cliqué sur {alert_type}")
-    
+
     await interaction.response.defer()
-    message = await interaction.followup.send(embed=embed)
     
+    if alert_type == "Alerte 1":
+        embed = discord.Embed(title=f"{get_emoji('alarme_emoji')} Alerte {get_emoji('alarme_emoji')}", description='Assaut en cours (Wither)')
+    elif alert_type == "Alerte 2":
+        embed = discord.Embed(title=f"{get_emoji('alarme_emoji')} Alerte {get_emoji('alarme_emoji')}", description='Sable cassé sauf obsidienne')
+    elif alert_type == "Alerte 3":
+        embed = discord.Embed(title=f"{get_emoji('alarme_emoji')} Alerte {get_emoji('alarme_emoji')}", description='Tunnel mais rien de cassé')
+    elif alert_type == "RAS":
+        embed = discord.Embed(title=f"{get_emoji('yes_emoji')} RAS", description='Rien à signaler')
+    else:
+        await interaction.followup.send("Error BC_PANEL / handle_button_click", ephemeral=True)
+        return
+
+    embed.set_footer(text=f'Vérifié par {interaction.user.display_name}')
+    message = await interaction.followup.send(embed=embed)
+
     message_data = await load_message_data()
     message_data['embed_messages'].append(message.id)
+
+    state = await load_alert_state()
+    for msg_id in state.get('reminder_message_ids', []):
+        try:
+            reminder_message = await interaction.channel.fetch_message(msg_id)
+            await reminder_message.delete()
+        except discord.NotFound:
+            pass
+    state['reminder_message_ids'] = []
+
+    if alert_type != "RAS":
+        await asyncio.sleep(0.5)
+        reminder_message = await interaction.channel.send(content="@everyone")
+        state['reminder_message_ids'].append(reminder_message.id)
+    
+    await save_alert_state(state)
+
     if len(message_data['embed_messages']) > 2:
         old_message_id = message_data['embed_messages'].pop(0)
         try:
@@ -206,29 +368,44 @@ async def handle_button_click(interaction, alert_type):
     
     last_interaction_time = time.time()
     
-    state = await load_alert_state()
-    
-    for msg_id in state['reminder_message_ids']:
-        try:
-            reminder_message = await interaction.channel.fetch_message(msg_id)
-            await reminder_message.delete()
-        except discord.NotFound:
-            pass
-    
-    state['reminder_message_ids'] = []
-    state['last_interaction_time'] = last_interaction_time
-    await save_alert_state(state)
+    member_id = str(interaction.user.id)
+    member_data = await load_member_data()
+
+    if member_id not in member_data:
+        member_data[member_id] = {"boss_kills": 0, "check_bc": 0, "a_vos_marques": 0}
+
+    member_data[member_id]["check_bc"] += 1
+
+    await save_member_data(member_data)
     
     if alert_task is not None and not alert_task.done():
         alert_task.cancel()
     alert_task = bot.loop.create_task(send_alert_if_needed(interaction.channel))
 
 
+async def send_alert_if_needed(channel):
+    global last_interaction_time, alert_task
+    state = await load_alert_state()
+    last_interaction_time = state['last_interaction_time']
+
+    while True:
+        await asyncio.sleep(alert_delay)
+        if time.time() - last_interaction_time >= alert_delay:
+            reminder_message = await channel.send(content="@everyone Un check BC est nécessaire !")
+            state['reminder_message_ids'].append(reminder_message.id)
+            await save_alert_state(state)
+            last_interaction_time = time.time()
 
 @bot.tree.command(name="send_bc_panel")
+@discord.app_commands.checks.has_role(staff_role)
 async def send_bc_panel(interaction: discord.Interaction):
     global alert_task, last_interaction_time
-    embed = discord.Embed(title="Check Panel", description="Sélectionnez une option:")
+    embed = discord.Embed(title="Check Panel", description="")
+    embed.add_field(name="✅ RAS - Rien à signaler.", value="", inline=False)
+    embed.add_field(name="🔴 Alerte 1 - Assaut en cours (Wither)", value="", inline=False)
+    embed.add_field(name="🔴 Alerte 2 - Sable cassé sauf obsidienne", value="", inline=False)
+    embed.add_field(name="🔴 Alerte 3 - Tunnel mais rien de cassé", value="", inline=False)
+    embed.set_footer(text="Un message s'affichera dans le channel ci-dessous lorsque vous aurez sélectionné l'un des boutons.")
     view = PanelCheckBC()
     await interaction.response.send_message(embed=embed, view=view)
     
@@ -241,36 +418,8 @@ async def send_bc_panel(interaction: discord.Interaction):
         await save_alert_state(state)
         alert_task = bot.loop.create_task(send_alert_if_needed(interaction.channel))
 
-
-async def send_alert_if_needed(channel):
-    global last_interaction_time, alert_task
-    state = await load_alert_state()
-    last_interaction_time = state['last_interaction_time']
-
-    while True:
-        await asyncio.sleep(alert_delay)
-        if time.time() - last_interaction_time >= alert_delay:
-            reminder_message = await channel.send(content="@everyone Un check BC est nécessaire. Veuillez vérifier et réagir en conséquence.")
-            state['reminder_message_ids'].append(reminder_message.id)
-            await save_alert_state(state)
-            last_interaction_time = time.time()
-
-
-    member_pseudo = interaction.user.name 
-    member_data = await load_member_data()
-    if member_pseudo not in member_data:
-        member_data[member_pseudo] = {"boss_kills": 0, "check_bc": 0, "a_vos_marques": 0}
-
-    if alert_type == "RAS":
-        member_data[member_pseudo]["check_bc"] += 1
-    elif alert_type == "Alerte 1":
-        member_data[member_pseudo]["check_bc"] += 1
-    elif alert_type == "Alerte 2":
-        member_data[member_pseudo]["check_bc"] += 1
-
-    await save_member_data(member_data)
-
 @bot.tree.command()
+@discord.app_commands.checks.has_role(staff_role)
 async def reset(interaction: discord.Interaction, member: str):
     member_data = await load_member_data()
     if member in member_data:
@@ -879,10 +1028,8 @@ try:
 except FileNotFoundError:
     coin_balances = {}
     
-@bot.event
-async def on_ready():
-    print(f'Logged in as {bot.user.name}')
-    update_status.start()
+
+    
     
 @bot.event
 async def on_error(event, *args, **kwargs):
@@ -1131,8 +1278,10 @@ class TicketBuyActionsView(discord.ui.View):
 
 @bot.event
 async def on_ready():
-    update_status()
     print(f'Connecté en tant que {bot.user}!')
+    state = load_bot_state()
+    if state.get("last_event_time"):
+        event_notification.start()
     all_tickets = load_data("tickets.json")
     for ticket_data in all_tickets.values():
         user_id = ticket_data["user_id"]
