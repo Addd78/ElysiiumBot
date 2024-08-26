@@ -81,7 +81,7 @@ def load_coin_balances():
 EVENT_CHANNEL_ID = 1275190953652650046
 
 event_schedule = {
-    "lundi": [
+    "monday": [
         {"name": "BOSS", "time": "01:00"},
         {"name": "BOSS", "time": "10:00"},
         {"name": "BOSS", "time": "18:00"},
@@ -89,7 +89,7 @@ event_schedule = {
         {"name": "A VOS MARQUES", "time": "20:30", "end_time": "21:00"},
         {"name": "BOSS", "time": "22:00"},
     ],
-    "mardi": [
+    "tuesday": [
         {"name": "BOSS", "time": "01:00"},
         {"name": "BOSS", "time": "10:00"},
         {"name": "BOSS", "time": "18:00"},
@@ -97,7 +97,7 @@ event_schedule = {
         {"name": "A VOS MARQUES", "time": "20:30", "end_time": "21:00"},
         {"name": "BOSS", "time": "22:00"},
     ],
-    "mercredi": [
+    "wednesday": [
         {"name": "BOSS", "time": "01:00"},
         {"name": "BOSS", "time": "10:00"},
         {"name": "A VOS MARQUES", "time": "16:00", "end_time": "16:30"},
@@ -106,7 +106,7 @@ event_schedule = {
         {"name": "TOTEM", "time": "21:00"},
         {"name": "BOSS", "time": "22:00"},
     ],
-    "jeudi": [
+    "thursday": [
         {"name": "BOSS", "time": "01:00"},
         {"name": "BOSS", "time": "10:00"},
         {"name": "BOSS", "time": "18:00"},
@@ -114,7 +114,7 @@ event_schedule = {
         {"name": "A VOS MARQUES", "time": "20:30", "end_time": "21:00"},
         {"name": "BOSS", "time": "22:00"},
     ],
-    "vendredi": [
+    "friday": [
         {"name": "BOSS", "time": "01:00"},
         {"name": "BOSS", "time": "10:00"},
         {"name": "BOSS", "time": "18:00"},
@@ -122,17 +122,16 @@ event_schedule = {
         {"name": "A VOS MARQUES", "time": "21:00", "end_time": "21:30"},
         {"name": "BOSS", "time": "22:00"},
     ],
-    "samedi": [
+    "saturday": [
         {"name": "BOSS", "time": "01:00"},
         {"name": "BOSS", "time": "10:00"},
         {"name": "A VOS MARQUES", "time": "15:00", "end_time": "15:30"},
         {"name": "BOSS", "time": "18:00"},
         {"name": "EGGHUNT", "time": "19:00", "end_time": "20:00"},
         {"name": "KOTH", "time": "21:00"},
-        {"name": "BOSS", "time": "22:00"},
-        {"name": "TEST", "time": "23:13"}
+        {"name": "BOSS", "time": "22:00"}
     ],
-    "dimanche": [
+    "sunday": [
         {"name": "BOSS", "time": "01:00"},
         {"name": "BOSS", "time": "10:00"},
         {"name": "A VOS MARQUES", "time": "15:00", "end_time": "15:30"},
@@ -156,11 +155,6 @@ def save_bot_state(state):
     with open(STATE_FILE, "w") as file:
         json.dump(state, file)
 
-def time_to_datetime(time_str):
-    now = datetime.now(pytz.timezone("Europe/Paris"))
-    return datetime.strptime(time_str, "%H:%M").replace(
-        year=now.year, month=now.month, day=now.day, tzinfo=now.tzinfo
-    )
 MONITOR_DURATION = 45 * 60 
 
 async def create_thread_for_event(event_name, message):
@@ -168,52 +162,75 @@ async def create_thread_for_event(event_name, message):
     thread = await message.create_thread(name=thread_name, auto_archive_duration=60)
     await monitor_thread(thread)
 
-async def monitor_thread(thread):
-    await asyncio.sleep(MONITOR_DURATION)
-    async for message in thread.history(after=datetime.utcnow() - timedelta(seconds=MONITOR_DURATION)):
+async def monitor_thread(thread, duration_minutes):
+    await asyncio.sleep(duration_minutes * 60)
+    
+    async for message in thread.history(limit=None):
         if message.attachments:
             member_id = str(message.author.id)
             member_data = await load_member_data()
-
+            
             if member_id not in member_data:
                 member_data[member_id] = {"boss_kills": 0, "check_bc": 0, "a_vos_marques": 0}
-
+            
             member_data[member_id]["a_vos_marques"] += 1
             await save_member_data(member_data)
-    
-    await thread.archive()
+
+    await thread.edit(archived=True)
+
+PARIS_TZ = pytz.timezone("Europe/Paris")
+
+
+def time_to_datetime(time_str):
+    now = datetime.now(PARIS_TZ)
+    event_time = datetime.strptime(time_str, "%H:%M").replace(year=now.year, month=now.month, day=now.day)
+    event_time = PARIS_TZ.localize(event_time)
+    return event_time
 
 @tasks.loop(minutes=1)
 async def event_notification():
-    state = load_bot_state()
-    now = datetime.now(pytz.timezone("Europe/Paris"))
+    now = datetime.now(PARIS_TZ)
     day_name = now.strftime("%A").lower()
 
     if day_name in event_schedule:
         for event in event_schedule[day_name]:
-            event_time = time_to_datetime(event["time"]) - timedelta(minutes=15)
 
-            if state["last_event_time"] != event_time.strftime("%Y-%m-%d %H:%M"):
-                if now >= event_time and now < event_time + timedelta(minutes=1):
-                    channel = bot.get_channel(EVENT_CHANNEL_ID)
+            start_time, end_time = None, None
+            if '-' in event['time']:
+                start_time, end_time = event['time'].split('-')
+                start_time = time_to_datetime(start_time)
+                end_time = time_to_datetime(end_time)
+            else:
+                start_time = time_to_datetime(event['time'])
+
+            notification_time = start_time - timedelta(minutes=15)
+
+            if now >= notification_time and now < notification_time + timedelta(minutes=1):
+                channel = bot.get_channel(EVENT_CHANNEL_ID)
+                if channel:
                     message = await channel.send(f"@everyone {event['name']} commence dans 15 minutes !")
 
                     if "A VOS MARQUES" in event["name"].upper():
-                        await create_thread_for_event(event["name"], message)
-
-                    state["last_event_time"] = event_time.strftime("%Y-%m-%d %H:%M")
-                    save_bot_state(state)
+                        thread = await message.create_thread(name=f"{event['name']} Discussion", auto_archive_duration=60)
+                        bot.loop.create_task(monitor_thread(thread, 45)) 
 
 @bot.tree.command(name="start_notifications")
-async def start_notifications(interaction):
-    event_notification.start()
-    await interaction.response.send_message("La vérification des événements a commencé.")
+@discord.app_commands.checks.has_role(staff_role)
+async def start_notifications(interaction: discord.Interaction):
+    if not event_notification.is_running():
+        event_notification.start()
+        await interaction.response.send_message("Notifications started.")
+    else:
+        await interaction.response.send_message("Notifications are already running.")
 
 @bot.tree.command(name="stop_notifications")
 async def stop_notifications(interaction):
     event_notification.stop()
     await interaction.response.send_message("La vérification des événements est arrêtée.")
 
+@bot.tree.command(name="test_notification")
+async def test_notification(interaction):
+    await event_notification()
 
 @bot.tree.command(name="boss_winner", description="Augmente le nombre de boss tués pour un membre")
 async def boss_winner(interaction: discord.Interaction, member: discord.Member):
@@ -354,8 +371,10 @@ async def handle_button_click(interaction, alert_type):
         reminder_message = await interaction.channel.send(content="@everyone")
         state['reminder_message_ids'].append(reminder_message.id)
     
+    # Mise à jour de l'état
     await save_alert_state(state)
 
+    # Suppression des anciens messages s'il y en a plus de deux
     if len(message_data['embed_messages']) > 2:
         old_message_id = message_data['embed_messages'].pop(0)
         try:
@@ -1279,8 +1298,7 @@ class TicketBuyActionsView(discord.ui.View):
 @bot.event
 async def on_ready():
     print(f'Connecté en tant que {bot.user}!')
-    state = load_bot_state()
-    if state.get("last_event_time"):
+    if not event_notification.is_running():
         event_notification.start()
     all_tickets = load_data("tickets.json")
     for ticket_data in all_tickets.values():
