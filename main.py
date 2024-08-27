@@ -76,7 +76,17 @@ def load_coin_balances():
     except FileNotFoundError:
         return None
     
+@bot.tree.command(name='delete_all_channels')
+@commands.has_permissions(manage_channels=True)
+async def delete_all_channels(interaction: discord.Interaction):
+    category = interaction.channel.category
     
+    if category is None:
+        await interaction.response.send_message("Ce salon n'appartient à aucune catégorie.")
+        return
+
+    for channel in category.channels:
+        await channel.delete()
 ###################### ARKANE ################################
 EVENT_CHANNEL_ID = 1275190953652650046
 
@@ -1298,6 +1308,7 @@ class TicketBuyActionsView(discord.ui.View):
 @bot.event
 async def on_ready():
     print(f'Connecté en tant que {bot.user}!')
+    await update_status()
     if not event_notification.is_running():
         event_notification.start()
     all_tickets = load_data("tickets.json")
@@ -1408,15 +1419,9 @@ async def send_remote_button_rc(interaction: discord.Interaction):
         return
 
     embed = discord.Embed(
-        title=f"{get_emoji('crown_emoji')} Recrutement Elysiium !!!",
-        description=(
-            "Bienvenue à tous sur le merveilleux serveur de La Elysiium Faction.\n\n"
-            "Afin d'optimiser les recrutements, nous les avons organisés sous forme de ticket donc pour toute demande de recrutement, veuillez interagir avec le bouton ci-dessous "
-            "en vous rappelant que si vous créez un ticket, il sera fermé en cas de non-réponse dans un délai de 7 jours et que tout abus sera sanctionné !\n\n"
-            "Veuillez aussi remplir le formulaire ci-dessous:\n\n"
-            "[Formulaire de recrutement](https://docs.google.com/forms/d/e/1FAIpQLSfdSHDbH_MCrVljo1eEqVNkPoAJC0cZtGmcaaqrdxfndJXtBg/viewform)"
+        title=f"{get_emoji('crown_emoji')} Multi-Bot Support !",
+        description="Pour toutes demandes concernant le MultiBot, veuiillez interagir avec le bouton ci-dessous"
         )
-    )
 
     view = RemoteButtonView()
     remote_channel_rc = interaction.guild.get_channel(REMOTE_CHANNEL_ID)
@@ -1456,7 +1461,7 @@ class RemoteButtonView(discord.ui.View):
 
         embed = discord.Embed(
             title="Bienvenue dans votre ticket",
-            description="Merci d'avoir ouvert un ticket. Un membre de l'équipe Recrutement sera bientôt avec vous.\n Assurez-vous d'avoir rempli le formulaire : (https://docs.google.com/forms/d/e/1FAIpQLSfdSHDbH_MCrVljo1eEqVNkPoAJC0cZtGmcaaqrdxfndJXtBg/viewform)"
+            description="Merci d'avoir ouvert un ticket, nous ne tarderons pas à s'occuper de vous"
         )
 
         action_view_rc = TicketActionView(ticket_channel_rc.id, interaction.user.id)
